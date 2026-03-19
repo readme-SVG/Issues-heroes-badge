@@ -1,0 +1,125 @@
+name: Audit Banned Word Violations
+
+on:
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Audit and ban users
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            const BAN_THRESHOLD = 10;
+            const BANNED_FILE   = 'banned-user/banned-user.txt';
+
+            const allIssues = await github.paginate(github.rest.issues.listForRepo, {
+              owner:    context.repo.owner,
+              repo:     context.repo.repo,
+              state:    'all',
+              per_page: 100,
+            });
+
+            const counts = new Map();
+
+            for (const issue of allIssues) {
+              const hasInvalid = issue.labels.some(l => l.name === 'Invalid');
+              if (!hasInvalid) continue;
+
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner:       context.repo.owner,
+                repo:        context.repo.repo,
+                issue_number: issue.number,
+                per_page:    100,
+              });
+
+              const hasBannedWordViolation = comments.some(c =>
+                c.body && c.body.includes('Username contains a banned word.')
+              );
+
+              if (!hasBannedWordViolation) continue;
+
+              const login = issue.user?.login;
+              if (!login) continue;
+
+              counts.set(login, (counts.get(login) || 0) + 1);
+            }
+
+            const bannedDir = path.dirname(BANNED_FILE);
+            if (!fs.existsSync(bannedDir)) fs.mkdirSync(bannedDir, { recursive: true });
+
+            const existing = new Map();
+            if (fs.existsSync(BANNED_FILE)) {
+              const lines = fs.readFileSync(BANNED_FILE, 'utf8').split('\n').filter(Boolean);
+              for (const line of lines) {
+                const [name, num] = line.split('|').map(s => s.trim());
+                if (name) existing.set(name, parseInt(num) || 0);
+              }
+            }
+
+            for (const [login, count] of counts) {
+              const prev = existing.get(login) || 0;
+              existing.set(login, Math.max(prev, count));
+            }
+
+            const lines = [];
+            for (const [login, count] of existing) {
+              lines.push(`${login} | ${count}`);
+            }
+            fs.writeFileSync(BANNED_FILE, lines.join('\n') + '\n', 'utf8');
+
+            for (const [login, count] of existing) {
+              if (count < BAN_THRESHOLD) continue;
+
+              console.log(`Banning ${login} (${count} violations)`);
+
+              try {
+                await github.rest.orgs.blockUser({
+                  org:      context.repo.owner,
+                  username: login,
+                });
+              } catch (e) {
+                console.error(`Failed to block ${login}: ${e.message}`);
+              }
+
+              for (const issue of allIssues) {
+                if (issue.user?.login !== login) continue;
+                const hasInvalid = issue.labels.some(l => l.name === 'Invalid');
+                if (!hasInvalid) continue;
+
+                try {
+                  await github.rest.issues.createComment({
+                    owner:        context.repo.owner,
+                    repo:         context.repo.repo,
+                    issue_number: issue.number,
+                    body:         `🚫 This user has been blocked from the organization due to repeated banned word violations (${count} total).`,
+                  });
+                } catch (e) {
+                  console.error(`Failed to comment on #${issue.number}: ${e.message}`);
+                }
+              }
+            }
+
+      - name: Commit banned-user.txt
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add banned-user/banned-user.txt
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "chore: update banned-user.txt [$(date -u '+%Y-%m-%d')]"
+            git push
+          fi
