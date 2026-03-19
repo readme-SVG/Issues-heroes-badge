@@ -27,4 +27,4 @@ You can use it in any Markdown file by passing the `user` and `repo` query param
 
 ### Example in Markdown:
 
-![Heroes Board](https://codex-operator.vercel.app/api?user=codex-operator&repo=codex-operator)
+![Heroes Board](https://issues-heroes-badge.vercel.app/api?user=readme-SVG&repo=Issues-heroes-badge)
