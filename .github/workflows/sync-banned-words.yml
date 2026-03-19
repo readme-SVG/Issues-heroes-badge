@@ -1,0 +1,59 @@
+name: Sync Hard Banned Words
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout Issues-heroes-badge
+        uses: actions/checkout@v4
+        with:
+          path: target
+
+      - name: Fetch Hard-Banned-words-list from Banned-words repo
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FILES=$(gh api \
+            repos/readme-SVG/Banned-words/contents/Hard-Banned-words-list \
+            --jq '.[].name' \
+            -H "Accept: application/vnd.github+json")
+
+          mkdir -p _hard_banned
+
+          for FILE in $FILES; do
+            gh api \
+              repos/readme-SVG/Banned-words/contents/Hard-Banned-words-list/$FILE \
+              --jq '.content' | base64 -d > "_hard_banned/$FILE"
+          done
+
+      - name: Sync files into banned-words/ (keep note.md)
+        run: |
+          cd target
+          find banned-words/ -maxdepth 1 -name '*.txt' -delete
+          for FILE in ../_hard_banned/*; do
+            BASENAME=$(basename "$FILE")
+            if [ "$BASENAME" != "note.md" ]; then
+              cp "$FILE" "banned-words/$BASENAME"
+            fi
+          done
+
+      - name: Commit and push if changed
+        run: |
+          cd target
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add banned-words/
+          if git diff --cached --quiet; then
+            echo "No changes"
+          else
+            git commit -m "chore: sync hard-banned words [$(date -u '+%Y-%m-%d')]"
+            git push
+          fi
