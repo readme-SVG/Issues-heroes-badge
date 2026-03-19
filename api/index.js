@@ -151,10 +151,10 @@ export default async function handler(req, res) {
             if (await isBanned(name)) continue;
 
             authors.push({ name, color: safeCssColor(color) });
-            if (authors.length >= 8) break;
+            if (authors.length >= 10) break;
         }
 
-        while (authors.length < 8) {
+        while (authors.length < 10) {
             authors.push({ name: 'Write-Issues', color: '#555566' });
         }
 
