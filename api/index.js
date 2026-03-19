@@ -4,24 +4,98 @@ const MAX_TITLE_LEN = 60;
 
 const ISSUE_RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ -]{1,20})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
 
+/**
+ * Escapes XML-sensitive characters in a value converted to string.
+ *
+ * @param {unknown} str Input value that may contain XML-sensitive characters.
+ * @returns {string} The escaped string safe to interpolate into SVG/XML text nodes.
+ *
+ * @example
+ * ```js
+ * escapeXml('<hero & "friend">');
+ * // '&lt;hero &amp; &quot;friend&quot;&gt;'
+ * ```
+ */
 function escapeXml(str) {
     return String(str).replace(/[<>&"']/g, c =>
         ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' }[c])
     );
 }
 
+/**
+ * Returns a CSS-safe hex color or a neutral fallback color.
+ *
+ * @param {string} color Candidate color string.
+ * @returns {string} The original color if it matches a hex format, otherwise `#888888`.
+ *
+ * @example
+ * ```js
+ * safeCssColor('#ff00ff');
+ * // '#ff00ff'
+ *
+ * safeCssColor('red');
+ * // '#888888'
+ * ```
+ */
 function safeCssColor(color) {
     return /^#[0-9a-fA-F]{3,6}$/.test(color) ? color : '#888888';
 }
 
+/**
+ * Validates whether a string is a 3- or 6-digit hex color value.
+ *
+ * @param {string} color Color candidate to validate.
+ * @returns {boolean} `true` when `color` is `#RGB` or `#RRGGBB`; otherwise `false`.
+ *
+ * @example
+ * ```js
+ * isValidHex('#abc');
+ * // true
+ *
+ * isValidHex('#12abz9');
+ * // false
+ * ```
+ */
 function isValidHex(color) {
     return /^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color);
 }
 
+/**
+ * Picks a random fallback color from the predefined palette.
+ *
+ * @returns {string} A hex color string selected from `FALLBACK_COLORS`.
+ *
+ * @example
+ * ```js
+ * randomColor();
+ * // '#3f88e6' (example output)
+ * ```
+ */
 function randomColor() {
     return FALLBACK_COLORS[Math.floor(Math.random() * FALLBACK_COLORS.length)];
 }
 
+/**
+ * Matches a string against a custom lightweight pattern language.
+ *
+ * Supported operators:
+ * - `&&` requires all sub-patterns to match.
+ * - `*` matches any sequence (including spaces).
+ * - `+` matches one non-space token.
+ *
+ * @param {string} pattern Pattern expression to evaluate.
+ * @param {string} str Candidate string to test against the pattern.
+ * @returns {boolean} `true` if the candidate matches the provided pattern; otherwise `false`.
+ *
+ * @example
+ * ```js
+ * matchPattern('hero*', 'hero-name');
+ * // true
+ *
+ * matchPattern('alpha&&beta', 'alpha beta');
+ * // true
+ * ```
+ */
 function matchPattern(pattern, str) {
     // Support simple AND composition so each token can stay readable.
     if (pattern.includes('&&')) {
@@ -35,7 +109,7 @@ function matchPattern(pattern, str) {
             .replace(/\*/g, '[\\s\\S]*')
             .replace(/\+/g, '[^\\s]+');
         const startsWild = pattern[0] === '*' || pattern[0] === '+';
-        const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
+        const endsWild = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
         let re;
         try {
             // Keep full-string matching by default, but allow substring matching
@@ -43,7 +117,9 @@ function matchPattern(pattern, str) {
             re = (startsWild || endsWild)
                 ? new RegExp(reStr, 'i')
                 : new RegExp('^' + reStr + '$', 'i');
-        } catch { return false; }
+        } catch {
+            return false;
+        }
         return re.test(str);
     }
     return str === pattern;
@@ -53,6 +129,24 @@ let _bannedCache = null;
 let _bannedCacheAt = 0;
 const BANNED_CACHE_TTL = 60_000;
 
+/**
+ * Loads banned-word patterns from a remote GitHub repository with TTL caching.
+ *
+ * The function fetches all `.txt` files under `Hard-Banned-words-list/`,
+ * normalizes entries to lowercase, removes duplicates, and keeps a short
+ * in-memory cache to reduce repeated network requests.
+ *
+ * @async
+ * @returns {Promise<string[]>} A deduplicated list of normalized banned patterns.
+ * @throws {Error} Intentionally throws when tree retrieval fails with a non-OK status,
+ *   but catches internally and returns cached/empty data as fallback.
+ *
+ * @example
+ * ```js
+ * const patterns = await loadBannedPatterns();
+ * // ['badword', 'foo*', 'term&&other']
+ * ```
+ */
 async function loadBannedPatterns() {
     const now = Date.now();
     // Short in-memory cache to avoid repeated GitHub calls on hot paths.
@@ -95,7 +189,7 @@ async function loadBannedPatterns() {
                 .forEach(p => patterns.push(p));
         }
 
-        _bannedCache   = [...new Set(patterns)];
+        _bannedCache = [...new Set(patterns)];
         _bannedCacheAt = now;
         return _bannedCache;
 
@@ -105,14 +199,45 @@ async function loadBannedPatterns() {
     }
 }
 
+/**
+ * Checks whether a display name matches any banned pattern.
+ *
+ * @async
+ * @param {string} name Candidate display name to evaluate.
+ * @returns {Promise<boolean>} `true` if any banned pattern matches the lowercased name.
+ *
+ * @example
+ * ```js
+ * const blocked = await isBanned('Example User');
+ * // false
+ * ```
+ */
 async function isBanned(name) {
     const patterns = await loadBannedPatterns();
     return patterns.some(p => matchPattern(p, name.toLowerCase()));
 }
 
+/**
+ * Handles HTTP requests and returns an animated SVG of accepted issue authors.
+ *
+ * The handler queries repository issues, validates titles against a strict
+ * template, enforces label and content constraints, filters banned names,
+ * and generates a stable 10-entry animated board.
+ *
+ * @async
+ * @param {{query: {user?: string, repo?: string}}} req Incoming request object.
+ * @param {{setHeader: Function, status: Function}} res Outgoing response object.
+ * @returns {Promise<void>} Resolves after sending either an SVG badge or an error SVG.
+ *
+ * @example
+ * ```js
+ * // GET /api?user=octocat&repo=Hello-World
+ * // -> 200 image/svg+xml response with animated names
+ * ```
+ */
 export default async function handler(req, res) {
     const username = req.query.user || 'readme-SVG';
-    const repo     = req.query.repo || 'Issues-heroes-badge';
+    const repo = req.query.repo || 'Issues-heroes-badge';
 
     try {
         const headers = { 'User-Agent': 'bounce-badge' };
@@ -127,8 +252,8 @@ export default async function handler(req, res) {
         if (!apiRes.ok) throw new Error(`GitHub API error: ${apiRes.status}`);
 
         const issues = await apiRes.json();
-        const authors        = [];
-        const seenNames      = new Set();
+        const authors = [];
+        const seenNames = new Set();
         const authorIssueMap = new Map();
 
         for (const issue of issues) {
@@ -143,7 +268,7 @@ export default async function handler(req, res) {
             if (!hasValid) continue;
 
             const login = (issue.user?.login || '').toLowerCase();
-            const name  = m[1].trim();
+            const name = m[1].trim();
             const color = (m[2] && isValidHex(m[2])) ? m[2] : randomColor();
 
             const count = authorIssueMap.get(login) || 0;
@@ -165,11 +290,11 @@ export default async function handler(req, res) {
             authors.push({ name: 'Write-Issues', color: '#555566' });
         }
 
-        const width  = 850;
+        const width = 850;
         const height = 200;
 
         let styles = '';
-        let elems  = '';
+        let elems = '';
 
         authors.forEach(({ name, color }, i) => {
             const durX = (Math.random() * 4 + 4).toFixed(1);
@@ -181,9 +306,9 @@ export default async function handler(req, res) {
 
             const charWidth = 10.8;
             const textWidth = name.length * charWidth;
-            const maxX      = Math.max(10, width  - textWidth - 20);
-            const maxY      = Math.max(40, height - 20);
-            const safeName  = escapeXml(name);
+            const maxX = Math.max(10, width - textWidth - 20);
+            const maxY = Math.max(40, height - 20);
+            const safeName = escapeXml(name);
 
             styles += `
 .gX${i}{animation:mX${i} ${durX}s linear ${delX}s infinite ${dirX};}
