@@ -1,0 +1,46 @@
+bat && zona
+ben && zona
+cha*
+fak
+hara
+idiot
+kalba
+kelev
+kus && emak
+kus && ima && shelcha
+kus && rabbak
+lech && tizdayen
+manyak
+metumtam
+putana
+sharmuta
+shit
+shmuck
+tipesh
+tistom
+tistom && et && hape
+tizdayen
+zay*
+zona
+אידיוט
+בן && זונה
+בת && זונה
+זונה
+זין
+חמור
+חרה
+טיפש
+כוס && אמך
+כוס && רבאק
+כלב*
+לך && תזדיין
+מטומטם
+מניאק
+פאק
+פוטנה
+שיט
+שמוק
+שרמוטה
+תזדיין
+תסתום
+תסתום && את && הפה

@@ -1,0 +1,32 @@
+ái && gamísou
+ái && sichtír
+ánte && gamísou
+gam*
+gamó && tin && poutána && sou
+gamó && to && spíti && sou
+ilíthios
+kariólis
+kol*
+malak*
+moun*
+poústis
+poutána
+sichtír)
+skatá
+vlákas
+άι && γαμήσου
+άι && σιχτίρ
+άντε && γαμήσου
+βλάκας
+γαμ*
+γαμώ && την && πουτάνα && σου
+γαμώ && το && σπίτι && σου
+ηλίθιος
+καριόλης
+κωλ*
+μαλ*
+μουν*
+πούστης
+πουτάνα
+σιχτίρ
+σκατά
