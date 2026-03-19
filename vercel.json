@@ -1,0 +1,9 @@
+{
+  "version": 2,
+  "rewrites": [
+    {
+      "source": "/badge",
+      "destination": "/api/index.js"
+    }
+  ]
+}

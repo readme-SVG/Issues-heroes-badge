@@ -1,0 +1,11 @@
+{
+  "name": "github-issues-bounce-badge",
+  "version": "1.0.0",
+  "description": "Dynamic GitHub badge for bouncing issue authors",
+  "main": "api/index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "OstinUA",
+  "license": "MIT"
+}
