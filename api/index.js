@@ -23,11 +23,13 @@ function randomColor() {
 }
 
 function matchPattern(pattern, str) {
+    // Support simple AND composition so each token can stay readable.
     if (pattern.includes('&&')) {
         const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
         return parts.every(p => matchPattern(p, str));
     }
     if (pattern.includes('*') || pattern.includes('+')) {
+        // Escape regex control chars first, then expand our custom wildcards.
         const reStr = pattern
             .replace(/[.^${}()|[\]\\]/g, '\\$&')
             .replace(/\*/g, '[\\s\\S]*')
@@ -36,6 +38,8 @@ function matchPattern(pattern, str) {
         const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
         let re;
         try {
+            // Keep full-string matching by default, but allow substring matching
+            // when a wildcard is explicitly placed at an edge.
             re = (startsWild || endsWild)
                 ? new RegExp(reStr, 'i')
                 : new RegExp('^' + reStr + '$', 'i');
@@ -51,6 +55,7 @@ const BANNED_CACHE_TTL = 60_000;
 
 async function loadBannedPatterns() {
     const now = Date.now();
+    // Short in-memory cache to avoid repeated GitHub calls on hot paths.
     if (_bannedCache && now - _bannedCacheAt < BANNED_CACHE_TTL) return _bannedCache;
 
     const repoEnv = process.env.BANNED_WORDS_REPO || 'readme-SVG/Banned-words';
@@ -142,6 +147,7 @@ export default async function handler(req, res) {
             const color = (m[2] && isValidHex(m[2])) ? m[2] : randomColor();
 
             const count = authorIssueMap.get(login) || 0;
+            // Cap each author to two accepted entries to keep the board diverse.
             if (count >= 2) continue;
             authorIssueMap.set(login, count + 1);
 
@@ -155,6 +161,7 @@ export default async function handler(req, res) {
         }
 
         while (authors.length < 10) {
+            // Keep output shape stable so the SVG layout stays predictable.
             authors.push({ name: 'Write-Issues', color: '#555566' });
         }
 
