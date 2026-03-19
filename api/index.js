@@ -22,6 +22,88 @@ function randomColor() {
     return FALLBACK_COLORS[Math.floor(Math.random() * FALLBACK_COLORS.length)];
 }
 
+function matchPattern(pattern, str) {
+    if (pattern.includes('&&')) {
+        const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
+        return parts.every(p => matchPattern(p, str));
+    }
+    if (pattern.includes('*') || pattern.includes('+')) {
+        const reStr = pattern
+            .replace(/[.^${}()|[\]\\]/g, '\\$&')
+            .replace(/\*/g, '[\\s\\S]*')
+            .replace(/\+/g, '[^\\s]+');
+        const startsWild = pattern[0] === '*' || pattern[0] === '+';
+        const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
+        let re;
+        try {
+            re = (startsWild || endsWild)
+                ? new RegExp(reStr, 'i')
+                : new RegExp('^' + reStr + '$', 'i');
+        } catch { return false; }
+        return re.test(str);
+    }
+    return str === pattern;
+}
+
+let _bannedCache = null;
+let _bannedCacheAt = 0;
+const BANNED_CACHE_TTL = 60_000;
+
+async function loadBannedPatterns() {
+    const now = Date.now();
+    if (_bannedCache && now - _bannedCacheAt < BANNED_CACHE_TTL) return _bannedCache;
+
+    const repoEnv = process.env.BANNED_WORDS_REPO || 'readme-SVG/Banned-words';
+    const [owner, repo] = repoEnv.split('/');
+    const branch = process.env.BANNED_WORDS_BRANCH || 'main';
+
+    const headers = { 'User-Agent': 'bounce-badge' };
+    if (process.env.GITHUB_TOKEN) headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
+
+    try {
+        const treeRes = await fetch(
+            `https://api.github.com/repos/${owner}/${repo}/git/trees/${branch}?recursive=1`,
+            { headers }
+        );
+        if (!treeRes.ok) throw new Error(`tree fetch failed: ${treeRes.status}`);
+
+        const tree = await treeRes.json();
+        const txtFiles = (tree.tree || []).filter(
+            f => f.type === 'blob' && f.path.startsWith('Hard-Banned-words-list/') && f.path.endsWith('.txt')
+        );
+
+        const contents = await Promise.all(
+            txtFiles.map(f =>
+                fetch(
+                    `https://raw.githubusercontent.com/${owner}/${repo}/${branch}/${f.path}`,
+                    { headers }
+                ).then(r => r.ok ? r.text() : '')
+            )
+        );
+
+        const patterns = [];
+        for (const text of contents) {
+            text.split('\n')
+                .map(l => l.trim().toLowerCase())
+                .filter(Boolean)
+                .forEach(p => patterns.push(p));
+        }
+
+        _bannedCache   = [...new Set(patterns)];
+        _bannedCacheAt = now;
+        return _bannedCache;
+
+    } catch (err) {
+        console.error('Failed to load banned patterns:', err.message);
+        return _bannedCache || [];
+    }
+}
+
+async function isBanned(name) {
+    const patterns = await loadBannedPatterns();
+    return patterns.some(p => matchPattern(p, name.toLowerCase()));
+}
+
 export default async function handler(req, res) {
     const username = req.query.user || 'readme-SVG';
     const repo     = req.query.repo || 'Issues-heroes-badge';
@@ -65,6 +147,8 @@ export default async function handler(req, res) {
 
             if (seenNames.has(name.toLowerCase())) continue;
             seenNames.add(name.toLowerCase());
+
+            if (await isBanned(name)) continue;
 
             authors.push({ name, color: safeCssColor(color) });
             if (authors.length >= 7) break;
