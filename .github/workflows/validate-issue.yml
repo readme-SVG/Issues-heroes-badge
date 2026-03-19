@@ -1,0 +1,231 @@
+name: Issue Validator
+
+on:
+  issues:
+    types: [opened, edited]
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Issue Format
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            const fs   = require('fs');
+            const path = require('path');
+
+            const issue = context.payload.issue;
+            const title = (issue.title || '').trim();
+            const body  = (issue.body  || '').trim();
+
+            let errors = [];
+
+            // ── Лимит длины до regex (защита от ReDoS) ─────────────────────
+            const MAX_LEN = 60;
+            if (title.length > MAX_LEN) {
+              errors.push(`- Issue title is too long (${title.length} chars). Maximum allowed: ${MAX_LEN}.`);
+            }
+
+            // ── Title и body должны совпадать ───────────────────────────────
+            if (title !== body) {
+              errors.push('- Title and body must be exactly identical.');
+            }
+
+            // ── Строгий regex ───────────────────────────────────────────────
+            const RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ -]{1,15})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
+            const match = title.length <= MAX_LEN ? title.match(RE) : null;
+
+            let hasColor = false;
+            let heroName = '';
+
+            if (!match) {
+              if (title.length <= MAX_LEN) {
+                errors.push(
+                  '- The content must be exactly `<HeroeName|Username>` or `<HeroeName|Username|#RRGGBB>` with no extra text.'
+                );
+              }
+            } else {
+              heroName    = match[1].trim();
+              const color = match[2];
+
+              if (!heroName || heroName.length === 0) {
+                errors.push('- Username cannot be empty.');
+              }
+              if (heroName.length > 15) {
+                errors.push(`- Username is too long (${heroName.length} chars). Maximum: 15.`);
+              }
+              if (/[^a-zA-Z\u0400-\u04FF0-9_ -]/.test(heroName)) {
+                errors.push('- Username contains invalid characters. Only letters (latin/cyrillic), numbers, spaces, underscores, and hyphens are allowed.');
+              }
+
+              if (color !== undefined) {
+                hasColor = true;
+                if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {
+                  errors.push(`- Color \`${color}\` is not valid. Use \`#RGB\` or \`#RRGGBB\` (e.g. \`#FF0000\`).`);
+                }
+              }
+
+              // ── Проверка banned-words/ ──────────────────────────────────────
+              const bannedDir = path.join(process.env.GITHUB_WORKSPACE, 'banned-words');
+              if (fs.existsSync(bannedDir) && fs.statSync(bannedDir).isDirectory()) {
+
+                // Читаем все .txt файлы и собираем паттерны
+                const files = fs.readdirSync(bannedDir).filter(f => f.endsWith('.txt'));
+                const patterns = [];
+
+                for (const file of files) {
+                  const content = fs.readFileSync(path.join(bannedDir, file), 'utf8');
+                  content
+                    .split('\n')
+                    .map(l => l.trim().toLowerCase())
+                    .filter(Boolean)
+                    .forEach(line => patterns.push(line));
+                }
+
+                // ── Движок матчинга ─────────────────────────────────────────
+                const input = heroName.toLowerCase();
+
+                /**
+                 * EXACT: слово совпадает целиком.
+                 * WILDCARD *: любые символы включая пробел.
+                 * WILDCARD +: любые символы без пробела.
+                 * AND (&&): все части должны присутствовать в строке.
+                 */
+                function matchPattern(pattern, str) {
+                  // AND-правило
+                  if (pattern.includes('&&')) {
+                    const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
+                    // Каждая часть сама может быть wildcard
+                    return parts.every(p => matchPattern(p, str));
+                  }
+
+                  // Wildcard: * или + присутствуют
+                  if (pattern.includes('*') || pattern.includes('+')) {
+                    // Экранируем все regex-символы кроме * и +
+                    const reStr = pattern
+                      .replace(/[.^${}()|[\]\\]/g, '\\$&')
+                      .replace(/\*/g, '[\\s\\S]*')   // * = что угодно
+                      .replace(/\+/g, '[^\\s]+');     // + = без пробела
+
+                    // Для + и * без якорей — ищем вхождение (not exact).
+                    // Для точного wildcard (нет якоря) — проверяем совпадение всей строки.
+                    // Логика: если паттерн начинается/заканчивается на wildcard — substring match.
+                    // Иначе — full match.
+                    const startsWild = pattern[0] === '*' || pattern[0] === '+';
+                    const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
+
+                    let re;
+                    if (startsWild || endsWild) {
+                      // substring поиск
+                      try { re = new RegExp(reStr, 'i'); } catch { return false; }
+                      return re.test(str);
+                    } else {
+                      // full match
+                      try { re = new RegExp('^' + reStr + '$', 'i'); } catch { return false; }
+                      return re.test(str);
+                    }
+                  }
+
+                  // EXACT: полное совпадение
+                  return str === pattern;
+                }
+
+                const found = patterns.find(p => matchPattern(p, input));
+                if (found) {
+                  errors.push('- Username contains a banned word.');
+                }
+              }
+            }
+
+            // ── Лимит: не более 2 принятых issues от одного пользователя ───
+            if (errors.length === 0) {
+              const login = issue.user.login;
+
+              const allIssues = await github.paginate(github.rest.issues.listForRepo, {
+                owner:    context.repo.owner,
+                repo:     context.repo.repo,
+                state:    'all',
+                per_page: 100,
+              });
+
+              const RE_CHECK = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ -]{1,15})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
+
+              const validFromAuthor = allIssues.filter(i =>
+                i.number !== issue.number &&
+                i.user?.login === login &&
+                (i.title || '').trim().length <= MAX_LEN &&
+                RE_CHECK.test((i.title || '').trim()) &&
+                i.labels.some(l => l.name === 'Valid')
+              );
+
+              if (validFromAuthor.length >= 2) {
+                errors.push(
+                  `- You already have **${validFromAuthor.length}** accepted issues. Maximum per user is **2**.`
+                );
+              }
+            }
+
+            // ── Лейблы ─────────────────────────────────────────────────────
+            for (const [name, color] of [['Valid', '0E8A16'], ['Invalid', 'D93F0B']]) {
+              try {
+                await github.rest.issues.getLabel({
+                  owner: context.repo.owner, repo: context.repo.repo, name
+                });
+              } catch (_) {
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner, repo: context.repo.repo, name, color
+                });
+              }
+            }
+
+            const isValid = errors.length === 0;
+
+            if (isValid) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, labels: ['Valid']
+              });
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: issue.number, name: 'Invalid'
+                });
+              } catch (_) {}
+
+              let commentBody = '✅ **Validation passed!** Your username will be added to the badge.';
+              if (!hasColor && heroName) {
+                commentBody += '\n\n💡 **Tip — want a custom color?**\nYou can also specify your own color by editing the issue to:\n```\n<HeroeName|' + heroName + '|#FF0000>\n```\nReplace `#FF0000` with any hex color you like (e.g. `#00FFAA`, `#3f88e6`).\nWithout a color, a random one is assigned automatically 🎨';
+              }
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, body: commentBody
+              });
+
+            } else {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number, labels: ['Invalid']
+              });
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner, repo: context.repo.repo,
+                  issue_number: issue.number, name: 'Valid'
+                });
+              } catch (_) {}
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner, repo: context.repo.repo,
+                issue_number: issue.number,
+                body: '❌ **Validation failed.** Please edit your issue to fix the following:\n\n' + errors.join('\n')
+              });
+            }
