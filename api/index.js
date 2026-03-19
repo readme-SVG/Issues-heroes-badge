@@ -117,8 +117,8 @@ async function isBanned(name) {
 }
 
 export default async function handler(req, res) {
-    const username = req.query.user || 'OstinUA';
-    const repo     = req.query.repo || 'Image-storage';
+    const username = req.query.user || 'readme-SVG';
+    const repo     = req.query.repo || 'Issues-heroes-badge';
 
     try {
         const headers = { 'User-Agent': 'bounce-badge' };
