@@ -58,7 +58,8 @@ async function loadBannedPatterns() {
     const branch = process.env.BANNED_WORDS_BRANCH || 'main';
 
     const headers = { 'User-Agent': 'bounce-badge' };
-    if (process.env.GITHUB_TOKEN) headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
+    const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+    if (token) headers['Authorization'] = `Bearer ${token}`;
 
     try {
         const treeRes = await fetch(
@@ -110,9 +111,8 @@ export default async function handler(req, res) {
 
     try {
         const headers = { 'User-Agent': 'bounce-badge' };
-        if (process.env.GITHUB_TOKEN) {
-            headers['Authorization'] = `Bearer ${process.env.GITHUB_TOKEN}`;
-        }
+        const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN;
+        if (token) headers['Authorization'] = `Bearer ${token}`;
 
         const apiRes = await fetch(
             `https://api.github.com/repos/${username}/${repo}/issues?state=all&per_page=100`,
