@@ -29,18 +29,15 @@ jobs:
 
             let errors = [];
 
-            // ── Лимит длины до regex (защита от ReDoS) ─────────────────────
             const MAX_LEN = 60;
             if (title.length > MAX_LEN) {
               errors.push(`- Issue title is too long (${title.length} chars). Maximum allowed: ${MAX_LEN}.`);
             }
 
-            // ── Title и body должны совпадать ───────────────────────────────
             if (title !== body) {
               errors.push('- Title and body must be exactly identical.');
             }
 
-            // ── Строгий regex ───────────────────────────────────────────────
             const RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ -]{1,15})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
             const match = title.length <= MAX_LEN ? title.match(RE) : null;
 
@@ -74,11 +71,8 @@ jobs:
                 }
               }
 
-              // ── Проверка banned-words/ ──────────────────────────────────────
               const bannedDir = path.join(process.env.GITHUB_WORKSPACE, 'banned-words');
               if (fs.existsSync(bannedDir) && fs.statSync(bannedDir).isDirectory()) {
-
-                // Читаем все .txt файлы и собираем паттерны
                 const files = fs.readdirSync(bannedDir).filter(f => f.endsWith('.txt'));
                 const patterns = [];
 
@@ -91,51 +85,33 @@ jobs:
                     .forEach(line => patterns.push(line));
                 }
 
-                // ── Движок матчинга ─────────────────────────────────────────
                 const input = heroName.toLowerCase();
 
-                /**
-                 * EXACT: слово совпадает целиком.
-                 * WILDCARD *: любые символы включая пробел.
-                 * WILDCARD +: любые символы без пробела.
-                 * AND (&&): все части должны присутствовать в строке.
-                 */
                 function matchPattern(pattern, str) {
-                  // AND-правило
                   if (pattern.includes('&&')) {
                     const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
-                    // Каждая часть сама может быть wildcard
                     return parts.every(p => matchPattern(p, str));
                   }
 
-                  // Wildcard: * или + присутствуют
                   if (pattern.includes('*') || pattern.includes('+')) {
-                    // Экранируем все regex-символы кроме * и +
                     const reStr = pattern
                       .replace(/[.^${}()|[\]\\]/g, '\\$&')
-                      .replace(/\*/g, '[\\s\\S]*')   // * = что угодно
-                      .replace(/\+/g, '[^\\s]+');     // + = без пробела
+                      .replace(/\*/g, '[\\s\\S]*')
+                      .replace(/\+/g, '[^\\s]+');
 
-                    // Для + и * без якорей — ищем вхождение (not exact).
-                    // Для точного wildcard (нет якоря) — проверяем совпадение всей строки.
-                    // Логика: если паттерн начинается/заканчивается на wildcard — substring match.
-                    // Иначе — full match.
                     const startsWild = pattern[0] === '*' || pattern[0] === '+';
                     const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
 
                     let re;
                     if (startsWild || endsWild) {
-                      // substring поиск
                       try { re = new RegExp(reStr, 'i'); } catch { return false; }
                       return re.test(str);
                     } else {
-                      // full match
                       try { re = new RegExp('^' + reStr + '$', 'i'); } catch { return false; }
                       return re.test(str);
                     }
                   }
 
-                  // EXACT: полное совпадение
                   return str === pattern;
                 }
 
@@ -146,7 +122,6 @@ jobs:
               }
             }
 
-            // ── Лимит: не более 2 принятых issues от одного пользователя ───
             if (errors.length === 0) {
               const login = issue.user.login;
 
@@ -169,12 +144,11 @@ jobs:
 
               if (validFromAuthor.length >= 2) {
                 errors.push(
-                  `- You already have **${validFromAuthor.length}** accepted issues. Maximum per user is **2**.`
+                  `- You already have **${validFromAuthor.length}** accepted issues. Maximum per user is **2**. Your existing accepted issues remain valid.`
                 );
               }
             }
 
-            // ── Лейблы ─────────────────────────────────────────────────────
             for (const [name, color] of [['Valid', '0E8A16'], ['Invalid', 'D93F0B']]) {
               try {
                 await github.rest.issues.getLabel({
