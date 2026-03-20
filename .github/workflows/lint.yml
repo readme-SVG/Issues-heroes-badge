@@ -8,33 +8,50 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # IMPORTANT: Allow the bot to push changes to the repository
+      contents: write 
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
+        with:
+          # IMPORTANT: Specify the PR branch so the bot can push the file there
+          ref: ${{ github.head_ref }} 
 
       - name: Setup Node.js
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
+          # The 'cache: npm' line is removed so the script doesn't fail if the lockfile is missing
 
-      - name: Install dependencies if lockfile exists
-      # No custom environment variables are needed here.
+      - name: Install dependencies and generate lockfile
         run: |
           if [ -f package-lock.json ]; then
+            echo "package-lock.json found. Running fast install (npm ci)..."
             npm ci
           else
+            echo "package-lock.json NOT found. Generating it (npm install)..."
             npm install --no-audit --no-fund
           fi
 
+      - name: Commit and push package-lock.json if newly created
+        run: |
+          # Check if there are new or modified files (specifically package-lock.json)
+          if [[ -n $(git status -s package-lock.json) ]]; then
+            echo "Saving the new package-lock.json to the repository..."
+            git config --local user.email "github-actions[bot]@users.noreply.github.com"
+            git config --local user.name "github-actions[bot]"
+            git add package-lock.json
+            git commit -m "chore: auto-generate package-lock.json"
+            git push
+          else
+            echo "package-lock.json has not changed. No commit required."
+          fi
+
       - name: Run project lint script when available
-      # No custom environment variables are needed here.
         run: npm run lint --if-present
 
       - name: Validate JavaScript syntax
-      # No custom environment variables are needed here.
         run: |
           while IFS= read -r -d '' file; do
             node --check "$file"
