@@ -13,7 +13,7 @@ jobs:
 
     steps:
       - name: Checkout Issues-heroes-badge
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           path: target
 
