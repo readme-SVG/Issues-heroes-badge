@@ -5,10 +5,12 @@ const MAX_TITLE_LEN = 60;
 const ISSUE_RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ -]{1,20})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
 
 /**
- * Escapes XML-sensitive characters in a value converted to string.
+ * Escapes XML-sensitive characters so dynamic text can be embedded in SVG safely.
  *
- * @param {unknown} str Input value that may contain XML-sensitive characters.
- * @returns {string} The escaped string safe to interpolate into SVG/XML text nodes.
+ * @param {unknown} str A value of any type that will be coerced to a string before
+ *     XML escaping is applied.
+ * @returns {string} A string where `<`, `>`, `&`, `"`, and `'` are replaced with
+ *     their XML entity equivalents.
  *
  * @example
  * ```js
@@ -23,10 +25,12 @@ function escapeXml(str) {
 }
 
 /**
- * Returns a CSS-safe hex color or a neutral fallback color.
+ * Returns a CSS-safe hexadecimal color string for SVG styling.
  *
- * @param {string} color Candidate color string.
- * @returns {string} The original color if it matches a hex format, otherwise `#888888`.
+ * @param {string} color A candidate CSS color string that is expected to be in
+ *     `#RGB` or `#RRGGBB` format.
+ * @returns {string} The original `color` when it is a valid hexadecimal color;
+ *     otherwise `#888888`.
  *
  * @example
  * ```js
@@ -42,10 +46,12 @@ function safeCssColor(color) {
 }
 
 /**
- * Validates whether a string is a 3- or 6-digit hex color value.
+ * Validates whether a string is a three- or six-digit hexadecimal color.
  *
- * @param {string} color Color candidate to validate.
- * @returns {boolean} `true` when `color` is `#RGB` or `#RRGGBB`; otherwise `false`.
+ * @param {string} color A color candidate that should begin with `#` and contain
+ *     either three or six hexadecimal characters.
+ * @returns {boolean} `true` when `color` matches `#RGB` or `#RRGGBB`; otherwise
+ *     `false`.
  *
  * @example
  * ```js
@@ -61,9 +67,9 @@ function isValidHex(color) {
 }
 
 /**
- * Picks a random fallback color from the predefined palette.
+ * Selects a random fallback color from the predefined palette.
  *
- * @returns {string} A hex color string selected from `FALLBACK_COLORS`.
+ * @returns {string} A hexadecimal color string chosen from `FALLBACK_COLORS`.
  *
  * @example
  * ```js
@@ -76,16 +82,18 @@ function randomColor() {
 }
 
 /**
- * Matches a string against a custom lightweight pattern language.
+ * Evaluates a string against the repository's lightweight moderation pattern syntax.
  *
  * Supported operators:
- * - `&&` requires all sub-patterns to match.
- * - `*` matches any sequence (including spaces).
- * - `+` matches one non-space token.
+ * - `&&` requires every sub-pattern to match.
+ * - `*` matches any sequence of characters, including spaces.
+ * - `+` matches exactly one non-whitespace token.
  *
- * @param {string} pattern Pattern expression to evaluate.
- * @param {string} str Candidate string to test against the pattern.
- * @returns {boolean} `true` if the candidate matches the provided pattern; otherwise `false`.
+ * @param {string} pattern A moderation rule expressed with literal text and the
+ *     supported wildcard operators.
+ * @param {string} str The candidate string to test against `pattern`.
+ * @returns {boolean} `true` when `str` satisfies the custom pattern expression;
+ *     otherwise `false`.
  *
  * @example
  * ```js
@@ -130,16 +138,17 @@ let _bannedCacheAt = 0;
 const BANNED_CACHE_TTL = 60_000;
 
 /**
- * Loads banned-word patterns from a remote GitHub repository with TTL caching.
+ * Loads banned-word patterns from the configured GitHub repository with TTL caching.
  *
- * The function fetches all `.txt` files under `Hard-Banned-words-list/`,
- * normalizes entries to lowercase, removes duplicates, and keeps a short
- * in-memory cache to reduce repeated network requests.
+ * The loader retrieves every `.txt` file under `Hard-Banned-words-list/`,
+ * normalizes each entry to lowercase, removes duplicates, and stores the result
+ * in a short-lived in-memory cache to reduce GitHub API traffic on repeated
+ * requests.
  *
  * @async
- * @returns {Promise<string[]>} A deduplicated list of normalized banned patterns.
- * @throws {Error} Intentionally throws when tree retrieval fails with a non-OK status,
- *   but catches internally and returns cached/empty data as fallback.
+ * @returns {Promise<string[]>} A promise that resolves to a deduplicated array of
+ *     normalized banned-pattern strings. If the remote fetch fails, the promise
+ *     resolves to the last cached value or an empty array.
  *
  * @example
  * ```js
@@ -200,11 +209,12 @@ async function loadBannedPatterns() {
 }
 
 /**
- * Checks whether a display name matches any banned pattern.
+ * Determines whether a proposed display name matches any banned pattern.
  *
  * @async
- * @param {string} name Candidate display name to evaluate.
- * @returns {Promise<boolean>} `true` if any banned pattern matches the lowercased name.
+ * @param {string} name The raw display name extracted from a GitHub issue title.
+ * @returns {Promise<boolean>} A promise that resolves to `true` when any banned
+ *     pattern matches the lowercased `name`; otherwise `false`.
  *
  * @example
  * ```js
@@ -218,16 +228,23 @@ async function isBanned(name) {
 }
 
 /**
- * Handles HTTP requests and returns an animated SVG of accepted issue authors.
+ * Handles the badge endpoint request and returns an animated SVG leaderboard.
  *
- * The handler queries repository issues, validates titles against a strict
- * template, enforces label and content constraints, filters banned names,
- * and generates a stable 10-entry animated board.
+ * The handler fetches repository issues, validates issue titles against the
+ * accepted `<HeroeName | display_name | #hex>` format, enforces the `Valid`
+ * label requirement, rejects duplicates and banned names, and finally renders
+ * a stable ten-row SVG payload. When GitHub access fails, it returns an error
+ * SVG instead of JSON so README embeds still render a visible diagnostic.
  *
  * @async
- * @param {{query: {user?: string, repo?: string}}} req Incoming request object.
- * @param {{setHeader: Function, status: Function}} res Outgoing response object.
- * @returns {Promise<void>} Resolves after sending either an SVG badge or an error SVG.
+ * @param {{query: {user?: string, repo?: string}}} req An HTTP request object whose
+ *     `query.user` and `query.repo` values are optional. When omitted, the handler
+ *     defaults to `readme-SVG` and `Issues-heroes-badge`.
+ * @param {{setHeader: (name: string, value: string) => void, status: (code: number) => {send: (body: string) => void}}} res
+ *     An HTTP response object that supports setting headers, status codes, and
+ *     sending string bodies.
+ * @returns {Promise<void>} A promise that resolves after the SVG response has been
+ *     written to the client.
  *
  * @example
  * ```js
