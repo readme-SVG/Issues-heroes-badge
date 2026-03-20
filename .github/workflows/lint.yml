@@ -1,0 +1,41 @@
+name: Lint and Static Checks
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies if lockfile exists
+      # No custom environment variables are needed here.
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci
+          else
+            npm install --no-audit --no-fund
+          fi
+
+      - name: Run project lint script when available
+      # No custom environment variables are needed here.
+        run: npm run lint --if-present
+
+      - name: Validate JavaScript syntax
+      # No custom environment variables are needed here.
+        run: |
+          while IFS= read -r -d '' file; do
+            node --check "$file"
+          done < <(find api -type f -name '*.js' -print0)
