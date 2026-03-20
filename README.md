@@ -7,6 +7,11 @@ A serverless logging-style visualization library that converts validated GitHub 
 [![Vercel](https://img.shields.io/badge/Deploy-Vercel-000000?style=for-the-badge&logo=vercel)](https://vercel.com/)
 [![GitHub API](https://img.shields.io/badge/Data-GitHub%20Issues-181717?style=for-the-badge&logo=github)](https://docs.github.com/en/rest/issues/issues)
 
+## Example in Markdown:
+
+![Heroes Board](https://issues-heroes-badge.vercel.app/api?user=readme-SVG&repo=Issues-heroes-badge)
+
+
 ## Table of Contents
 
 - [Features](#features)
@@ -165,7 +170,10 @@ This project is optimized for serverless delivery. If containerized, wrap the ha
 Create issues whose title follows this exact format:
 
 ```text
-<HeroeName | CyberKnight | #3f88e6>
+<HeroeName|CyberKnight|#3f88e6>
+```
+```text
+<HeroeName|CyberKnight>
 ```
 
 And ensure the issue contains the `Valid` label.
