@@ -1,0 +1,30 @@
+# OS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon?
+.Spotlight-V100
+.Trashes
+Thumbs.db
+Desktop.ini
+
+# Editor and IDE
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# Logs and environment
+*.log
+.env
+.env.*
+!.env.example
+
+# Runtime and temporary files
+.tmp/
+.cache/
+coverage/
+dist/
+build/
