@@ -2,50 +2,53 @@
 
 ## Supported Versions
 
-This project is currently maintained as a single active release line. Security fixes are applied to the latest code on the default branch and are not backported unless the maintainer explicitly states otherwise.
+Security fixes are applied exclusively to the latest code on the default branch. No backports are made to prior releases, forks, or modified deployments unless explicitly stated by the maintainer.
 
 | Version | Supported |
-| --- | --- |
-| Latest default branch | :white_check_mark: |
-| Earlier releases, forks, or modified deployments | :x: |
+|---|---|
+| Latest (`main` / default branch) | :white_check_mark: |
+| Any prior release, fork, or modified deployment | :x: |
 
 ## Reporting a Vulnerability
 
-If you believe you have found a security vulnerability in this project, report it privately by email to **43548757+OstinUA@users.noreply.github.com**.
+> **STOP — Do NOT open a public GitHub Issue, Pull Request, Discussion, commit comment, or any other public channel to report a security vulnerability. Public disclosure before a fix is available puts every deployment and user at immediate risk and is strictly forbidden.**
 
-Do not open a public GitHub Issue, Discussion, Pull Request, commit comment, or any other public disclosure for suspected security vulnerabilities. Public reports are strictly forbidden because they can expose users and deployments before a fix is available.
+Report all suspected vulnerabilities **privately and exclusively** by email to:
 
-When reporting a vulnerability, include the following whenever possible:
+**`43548757+OstinUA@users.noreply.github.com`**
 
-- A clear description of the issue and the affected component.
-- The impact, attack scenario, and any prerequisites.
-- Exact reproduction steps, proof-of-concept requests, or sample payloads.
-- The affected deployment URL, commit SHA, version, or environment details.
+Your report must include the following, wherever applicable:
+
+- A precise description of the vulnerability and the affected component or code path.
+- The severity, impact, and any realistic attack scenario or prerequisites.
+- Step-by-step reproduction instructions, proof-of-concept requests, or sample payloads.
+- The affected deployment URL, commit SHA, or environment details.
 - Your contact information for coordinated follow-up.
 
-The maintainer will review private reports, confirm receipt as quickly as possible, investigate the issue, and coordinate remediation and disclosure timing.
+The maintainer will acknowledge receipt as promptly as possible, investigate the issue, and coordinate remediation and responsible disclosure timing with you before any public statement is made.
 
-## API Keys and Data Privacy
+## API Key & Data Privacy Policy
 
-This project may rely on third-party API keys, such as GitHub access tokens, to increase API quota or enable authenticated upstream requests. Those keys are used only by the local runtime or the deployed client-side/serverless execution context that serves the badge.
+This project uses GitHub API tokens (`GH_TOKEN` / `GITHUB_TOKEN`) solely to authenticate outbound requests to the GitHub REST API and increase rate-limit quotas when rendering the SVG badge.
 
-This project is designed so that user-supplied API keys and personal data are **not** collected, logged, transmitted to unrelated third-party services, shared with analytics providers, or stored on external servers controlled by this project. Processing is performed locally or strictly within the client-side/serverless execution path required to fulfill the badge request.
+**This project does NOT collect, log, transmit, or store any user-supplied API keys or personal data on external servers.**
 
-In particular:
+Specifically:
 
-- The project does not provide a feature for end users to submit or upload API keys through a hosted database or external storage service.
-- The project does not intentionally persist user API keys or personal data beyond the runtime environment variables configured by the operator.
-- Repository issue data is fetched directly from GitHub APIs at request time for rendering the SVG response.
-- Operators are responsible for configuring secrets using their hosting platform's secure environment-variable facilities.
+- All processing occurs **locally** within the serverless execution context (e.g., Vercel Function) that handles each badge request. No data is forwarded to unrelated third-party services, analytics providers, or databases controlled by this project.
+- User-supplied tokens and personal data are **never** persisted beyond the operator-configured runtime environment variables required to fulfill a request.
+- Repository issue data is fetched directly from GitHub APIs at request time and used exclusively to render the SVG response. It is not cached on external storage or shared with any third party.
+- This project provides no mechanism for end users to submit, upload, or transmit API keys to a hosted database or external storage service.
+- Operators bear full responsibility for securing their own tokens and secrets using their hosting platform's secure environment-variable facilities.
 
 ## Security Best Practices for Operators
 
-- Store `GITHUB_TOKEN` or `GH_TOKEN` only in trusted local environments or secure hosting secret managers.
-- Grant the minimum token scope necessary for the intended GitHub API access.
-- Rotate tokens immediately if you suspect exposure.
-- Review badge deployments for accidental logging, custom middleware, or third-party observability tools that could capture request metadata.
-- Keep dependencies, the runtime, and the deployment platform updated with current security patches.
+- Store `GITHUB_TOKEN` or `GH_TOKEN` exclusively in trusted local environments or a secure hosting secret manager (e.g., Vercel Environment Variables). **Never** hard-code tokens in source files.
+- Grant the minimum token scope required for the GitHub API access this project needs (typically read-only access to public repository data).
+- Rotate tokens immediately upon any suspected or confirmed exposure.
+- Audit deployed instances for accidental logging, custom middleware, or third-party observability tools that could inadvertently capture request metadata containing secrets.
+- Keep all runtime dependencies and the deployment platform updated with current security patches.
 
-## Disclosure Policy
+## Coordinated Disclosure Policy
 
-Coordinated disclosure is required. Please allow the maintainer a reasonable period to validate and remediate the issue before any public statement is made. Once the issue is resolved, the maintainer may publish an advisory, patch notes, or other disclosure details as appropriate.
+Responsible, coordinated disclosure is required. Please allow the maintainer a reasonable remediation window before making any public statement about a vulnerability. Once the issue is fully resolved, the maintainer may publish a security advisory, patch notes, or a coordinated disclosure as appropriate.
