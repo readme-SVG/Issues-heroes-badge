@@ -1,4 +1,19 @@
-# GitHub Issues Heroes Badge
+<div align="center">
+
+<pre>
+ ______     __     ______   __  __     __  __     ______        __     ______     ______     __  __     ______     ______    
+/\  ___\   /\ \   /\__  _\ /\ \_\ \   /\ \/\ \   /\  == \      /\ \   /\  ___\   /\  ___\   /\ \/\ \   /\  ___\   /\  ___\   
+\ \ \__ \  \ \ \  \/_/\ \/ \ \  __ \  \ \ \_\ \  \ \  __<      \ \ \  \ \___  \  \ \___  \  \ \ \_\ \  \ \  __\   \ \___  \  
+ \ \_____\  \ \_\    \ \_\  \ \_\ \_\  \ \_____\  \ \_____\     \ \_\  \/\_____\  \/\_____\  \ \_____\  \ \_____\  \/\_____\ 
+  \/_____/   \/_/     \/_/   \/_/\/_/   \/_____/   \/_____/      \/_/   \/_____/   \/_____/   \/_____/   \/_____/   \/_____/ 
+                                                                                                                             
+ __  __     ______     ______     ______     ______     ______        ______     ______     _____     ______     ______      
+/\ \_\ \   /\  ___\   /\  == \   /\  __ \   /\  ___\   /\  ___\      /\  == \   /\  __ \   /\  __-.  /\  ___\   /\  ___\     
+\ \  __ \  \ \  __\   \ \  __<   \ \ \/\ \  \ \  __\   \ \___  \     \ \  __<   \ \  __ \  \ \ \/\ \ \ \ \__ \  \ \  __\     
+ \ \_\ \_\  \ \_____\  \ \_\ \_\  \ \_____\  \ \_____\  \/\_____\     \ \_____\  \ \_\ \_\  \ \____-  \ \_____\  \ \_____\   
+  \/_/\/_/   \/_____/   \/_/ /_/   \/_____/   \/_____/   \/_____/      \/_____/   \/_/\/_/   \/____/   \/_____/   \/_____/   
+                                                                                                                             
+</pre>
 
 A serverless logging-style visualization library that converts validated GitHub issue activity into a live animated SVG badge for README dashboards and community telemetry.
 
@@ -11,6 +26,7 @@ A serverless logging-style visualization library that converts validated GitHub 
 
 ![Heroes Board](https://issues-heroes-badge.vercel.app/api?user=readme-SVG&repo=Issues-heroes-badge)
 
+</div>
 
 ## Table of Contents
 
