@@ -38,7 +38,7 @@ jobs:
               errors.push('- Title and body must be exactly identical.');
             }
 
-            const RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ -]{1,20})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
+            const RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,20})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
             const match = title.length <= MAX_LEN ? title.match(RE) : null;
 
             let hasColor = false;
@@ -60,8 +60,8 @@ jobs:
               if (heroName.length > 20) {
                 errors.push(`- Username is too long (${heroName.length} chars). Maximum: 20.`);
               }
-              if (/[^a-zA-Z\u0400-\u04FF0-9_ -]/.test(heroName)) {
-                errors.push('- Username contains invalid characters. Only letters (latin/cyrillic), numbers, spaces, underscores, and hyphens are allowed.');
+              if (/[^a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]/.test(heroName)) {
+                errors.push('- Username contains invalid characters. Only letters (latin/cyrillic), numbers, spaces, underscores, hyphens, and punctuation (. ! , ? : ; \') are allowed.');
               }
 
               if (color !== undefined) {
@@ -132,7 +132,7 @@ jobs:
                 per_page: 100,
               });
 
-              const RE_CHECK = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ -]{1,20})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
+              const RE_CHECK = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,20})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
 
               const validFromAuthor = allIssues.filter(i =>
                 i.number !== issue.number &&
