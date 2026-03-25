@@ -40,7 +40,7 @@
 </head>
 <body>
     <h2>Валидатор записей Heroes Badge</h2>
-    <p>Введите заголовок Issue (например: &lt;HeroeName|MyName|#FF0000&gt;)</p>
+    <p>Введите заголовок Issue</p>
     
     <input type="text" id="issueInput" placeholder="<HeroeName|Username|#Hex>">
     <button onclick="validate()" id="checkBtn">Проверить</button>
@@ -100,9 +100,9 @@
 
             if (pattern.includes('*') || pattern.includes('+')) {
                 const reStr = pattern
-                    .replace(/[.^${}()|[\\]\\\\]/g, '\\\\$&')
-                    .replace(/\\*/g, '[\\\\s\\\\S]*')
-                    .replace(/\\+/g, '[^\\\\s]+');
+                    .replace(/[.^${}()|[\]\\]/g, '\\$&')
+                    .replace(/\*/g, '[\\s\\S]*')
+                    .replace(/\+/g, '[^\\s]+');
 
                 const startsWild = pattern[0] === '*' || pattern[0] === '+';
                 const endsWild = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
@@ -125,12 +125,12 @@
             const btn = document.getElementById('checkBtn');
             
             if (!input) {
-                resultDiv.innerHTML = 'Поле ввода пустое.';
+                resultDiv.innerText = 'Поле ввода пустое.';
                 resultDiv.className = 'error';
                 return;
             }
 
-            resultDiv.innerHTML = 'Загрузка словарей и проверка...';
+            resultDiv.innerText = 'Загрузка словарей и проверка...';
             resultDiv.className = 'warning';
             btn.disabled = true;
 
@@ -141,7 +141,7 @@
                 errors.push(`Длина заголовка превышает допустимую (${input.length} > ${MAX_LEN}).`);
             }
 
-            const RE = /^<\\s*HeroeName\\s*\\|\\s*([a-zA-Z\\u0400-\\u04FF0-9_ .!,?:;'-]{1,40})\\s*(?:\\|\\s*(#[0-9a-fA-F]{3,6})\\s*)?\\s*>$/i;
+            const RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,40})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
             const match = input.length <= MAX_LEN ? input.match(RE) : null;
 
             if (!match) {
@@ -154,7 +154,7 @@
 
                 if (!heroName) errors.push('Username не может быть пустым.');
                 if (heroName.length > 40) errors.push(`Username слишком длинный (${heroName.length} > 40).`);
-                if (/[^a-zA-Z\\u0400-\\u04FF0-9_ .!,?:;'-]/.test(heroName)) {
+                if (/[^a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]/.test(heroName)) {
                     errors.push('Username содержит недопустимые символы.');
                 }
 
@@ -180,10 +180,10 @@
             }
 
             if (errors.length === 0) {
-                resultDiv.innerHTML = 'Валидация пройдена. Запись корректна.';
+                resultDiv.innerText = 'Валидация пройдена. Запись корректна.';
                 resultDiv.className = 'success';
             } else {
-                resultDiv.innerHTML = 'Валидация не пройдена. Ошибки:\\n\\n- ' + errors.join('\\n- ');
+                resultDiv.innerText = 'Валидация не пройдена. Ошибки:\n\n- ' + errors.join('\n- ');
                 resultDiv.className = 'error';
             }
             
