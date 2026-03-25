@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Issue Validator Checker</title>
+    <title>Issue Format Validator</title>
     <style>
         body {
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
@@ -75,20 +75,33 @@
 <body>
 
 <div class="container">
-    <h2>Issue Format Checker</h2>
-    <p>Введите заголовок Issue для локальной проверки:</p>
+    <h2>Issue Format Validator</h2>
+    <p>Enter the Issue title for local validation:</p>
     <input type="text" id="issueInput" placeholder="<HeroeName|Username|#FF0000>" autocomplete="off">
-    <button id="checkBtn" onclick="checkIssue()">Проверить</button>
+    <button id="checkBtn" onclick="checkIssue()">Validate</button>
 
     <div id="resultBox" class="result"></div>
 </div>
 
 <script>
-    // Настройки репозитория
-    const REPO_OWNER = 'readme-SVG';
-    const REPO_NAME = 'Issues-heroes-badge';
-    const BRANCH = 'main'; // Или укажите нужную ветку
+    /**
+     * Local repository configuration (for Suspicious check).
+     */
+    const LOCAL_REPO_OWNER = 'readme-SVG';
+    const LOCAL_REPO_NAME = 'Issues-heroes-badge';
+    const LOCAL_BRANCH = 'main';
 
+    /**
+     * Global banned words repository configuration (for Invalid check).
+     */
+    const GLOBAL_REPO_OWNER = 'readme-SVG';
+    const GLOBAL_REPO_NAME = 'Banned-words';
+    const GLOBAL_BRANCH = 'main';
+
+    /**
+     * Evaluates whether a given string matches a specific pattern.
+     * Supports wildcard matching ('*' and '+') and logical AND ('&&') operations.
+     */
     function matchPattern(pattern, str) {
         if (pattern.includes('&&')) {
             const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
@@ -101,21 +114,25 @@
                 .replace(/\*/g, '[\\s\\S]*')
                 .replace(/\+/g, '[^\\s]+');
 
-            const startsWild = pattern[0] === '*' || pattern[0] === '+';
-            const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
+            const startsWithWildcard = pattern[0] === '*' || pattern[0] === '+';
+            const endsWithWildcard = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
 
-            let re;
-            if (startsWild || endsWild) {
-                try { re = new RegExp(reStr, 'i'); } catch { return false; }
-                return re.test(str);
+            let regex;
+            if (startsWithWildcard || endsWithWildcard) {
+                try { regex = new RegExp(reStr, 'i'); } catch { return false; }
+                return regex.test(str);
             } else {
-                try { re = new RegExp('^' + reStr + '$', 'i'); } catch { return false; }
-                return re.test(str);
+                try { regex = new RegExp('^' + reStr + '$', 'i'); } catch { return false; }
+                return regex.test(str);
             }
         }
         return str === pattern;
     }
 
+    /**
+     * Core validation controller.
+     * Implements the exact cascade logic from the GitHub Actions workflow.
+     */
     async function checkIssue() {
         const title = document.getElementById('issueInput').value.trim();
         const btn = document.getElementById('checkBtn');
@@ -123,8 +140,9 @@
         
         if (!title) return;
 
+        // UI state update: processing lock
         btn.disabled = true;
-        btn.textContent = 'Проверка...';
+        btn.textContent = 'Validating...';
         resBox.style.display = 'none';
         resBox.className = 'result';
         resBox.innerHTML = '';
@@ -132,102 +150,152 @@
         let errors = [];
         const MAX_LEN = 60;
         
+        // --- PHASE 1: Syntax and Format Validation ---
+        
         if (title.length > MAX_LEN) {
-            errors.push(`Issue title is too long (${title.length} chars). Maximum allowed: ${MAX_LEN}.`);
+            errors.push(`Issue title exceeds maximum length (${title.length}/${MAX_LEN} characters).`);
         }
 
-        const RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,40})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
-        const match = title.length <= MAX_LEN ? title.match(RE) : null;
+        const formatRegex = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,40})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
+        const match = title.length <= MAX_LEN ? title.match(formatRegex) : null;
 
         let heroName = '';
 
         if (!match) {
             if (title.length <= MAX_LEN) {
-                errors.push('The content must be exactly `<HeroeName|Username>` or `<HeroeName|Username|#RRGGBB>` with no extra text.');
+                errors.push('Strict format required: `<HeroeName|Username>` or `<HeroeName|Username|#RRGGBB>`. Extraneous characters are prohibited.');
             }
         } else {
             heroName = match[1].trim();
             const color = match[2];
 
             if (!heroName || heroName.length === 0) {
-                errors.push('Username cannot be empty.');
+                errors.push('The Username payload cannot be empty.');
             }
             if (heroName.length > 40) {
-                errors.push(`Username is too long (${heroName.length} chars). Maximum: 40.`);
+                errors.push(`Username exceeds maximum length (${heroName.length}/40 characters).`);
             }
             if (/[^a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]/.test(heroName)) {
-                errors.push('Username contains invalid characters. Only letters (latin/cyrillic), numbers, spaces, underscores, hyphens, and punctuation (. ! , ? : ; \') are allowed.');
+                errors.push('Username contains illegal characters. Permitted sets: alphanumeric (Latin/Cyrillic), spaces, underscores, hyphens, and standard punctuation (. ! , ? : ; \').');
             }
 
             if (color !== undefined) {
                 if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {
-                    errors.push(`Color \`${color}\` is not valid. Use \`#RGB\` or \`#RRGGBB\` (e.g. \`#FF0000\`).`);
+                    errors.push(`Invalid color hex code: \`${color}\`. Expected format: \`#RGB\` or \`#RRGGBB\`.`);
                 }
             }
         }
 
+        // Halt execution if syntax is invalid
         if (errors.length > 0) {
-            showResult('invalid', '[Invalid]\n\n' + errors.join('\n- '));
-            resetBtn();
+            renderResult('invalid', '[Invalid]\n\nSyntax errors detected:\n- ' + errors.join('\n- '));
+            restoreUI();
             return;
         }
 
-        // Если формат валиден, проверяем на Suspicious через GitHub API
+        const normalizedInput = heroName.toLowerCase();
+
+        // --- PHASE 2: Global Dictionary Validation (Strict Ban) ---
         try {
-            const treeUrl = `https://api.github.com/repos/${REPO_OWNER}/${REPO_NAME}/git/trees/${BRANCH}?recursive=1`;
-            const treeRes = await fetch(treeUrl);
+            const globalTreeUrl = `https://api.github.com/repos/${GLOBAL_REPO_OWNER}/${GLOBAL_REPO_NAME}/git/trees/${GLOBAL_BRANCH}?recursive=1`;
+            const globalTreeRes = await fetch(globalTreeUrl);
             
-            if (!treeRes.ok) {
-                throw new Error(`Failed to fetch repository tree: ${treeRes.status}`);
+            if (globalTreeRes.ok) {
+                const globalTreeData = await globalTreeRes.json();
+                const globalFiles = (globalTreeData.tree || []).filter(f => 
+                    f.type === 'blob' && f.path.startsWith('Banned-words-list/') && f.path.endsWith('.txt')
+                );
+
+                // Fetch global dictionary files concurrently
+                const globalContents = await Promise.all(
+                    globalFiles.map(f => fetch(`https://raw.githubusercontent.com/${GLOBAL_REPO_OWNER}/${GLOBAL_REPO_NAME}/${GLOBAL_BRANCH}/${f.path}`).then(r => r.ok ? r.text() : ''))
+                );
+
+                let globalMatchData = null;
+
+                for (let i = 0; i < globalContents.length; i++) {
+                    const patterns = globalContents[i].split('\n').map(line => line.trim().toLowerCase()).filter(Boolean);
+                    const matchedPattern = patterns.find(pattern => matchPattern(pattern, normalizedInput));
+                    
+                    if (matchedPattern) {
+                        globalMatchData = {
+                            filePath: globalFiles[i].path,
+                            rule: matchedPattern
+                        };
+                        break; // Terminate early on critical failure
+                    }
+                }
+
+                if (globalMatchData) {
+                    renderResult('invalid', `[Invalid]\n\nUsername contains a globally banned word.\nMatched Global File: ${globalMatchData.filePath}\nMatched Rule: ${globalMatchData.rule}`);
+                    restoreUI();
+                    return;
+                }
             }
+        } catch (error) {
+            console.warn(`Global dictionary check failed: ${error.message}`);
+        }
 
-            const treeData = await treeRes.json();
-            const txtFiles = (treeData.tree || []).filter(f => f.type === 'blob' && f.path.startsWith('banned-words/') && f.path.endsWith('.txt'));
+        // --- PHASE 3: Local Dictionary Validation (Suspicious Warning) ---
+        try {
+            const localTreeUrl = `https://api.github.com/repos/${LOCAL_REPO_OWNER}/${LOCAL_REPO_NAME}/git/trees/${LOCAL_BRANCH}?recursive=1`;
+            const localTreeRes = await fetch(localTreeUrl);
+            
+            if (localTreeRes.ok) {
+                const localTreeData = await localTreeRes.json();
+                const localFiles = (localTreeData.tree || []).filter(f => 
+                    f.type === 'blob' && f.path.startsWith('banned-words/') && f.path.endsWith('.txt')
+                );
 
-            let suspiciousMatchInfo = null;
-            const inputLower = heroName.toLowerCase();
+                // Fetch local dictionary files concurrently
+                const localContents = await Promise.all(
+                    localFiles.map(f => fetch(`https://raw.githubusercontent.com/${LOCAL_REPO_OWNER}/${LOCAL_REPO_NAME}/${LOCAL_BRANCH}/${f.path}`).then(r => r.ok ? r.text() : ''))
+                );
 
-            for (const fileObj of txtFiles) {
-                const rawUrl = `https://raw.githubusercontent.com/${REPO_OWNER}/${REPO_NAME}/${BRANCH}/${fileObj.path}`;
-                const fileRes = await fetch(rawUrl);
-                
-                if (fileRes.ok) {
-                    const content = await fileRes.text();
-                    const localPatterns = content.split('\n').map(l => l.trim().toLowerCase()).filter(Boolean);
+                let suspiciousMatchData = null;
+
+                for (let i = 0; i < localContents.length; i++) {
+                    const patterns = localContents[i].split('\n').map(line => line.trim().toLowerCase()).filter(Boolean);
+                    const matchedPattern = patterns.find(pattern => matchPattern(pattern, normalizedInput));
                     
-                    const suspiciousMatch = localPatterns.find(p => matchPattern(p, inputLower));
-                    
-                    if (suspiciousMatch) {
-                        suspiciousMatchInfo = {
-                            file: fileObj.path,
-                            pattern: suspiciousMatch
+                    if (matchedPattern) {
+                        suspiciousMatchData = {
+                            filePath: localFiles[i].path,
+                            rule: matchedPattern
                         };
                         break;
                     }
                 }
-            }
 
-            if (suspiciousMatchInfo) {
-                showResult('suspicious', `[Suspicious]\n\nUsername matched a pattern in local dictionaries.\nFile: ${suspiciousMatchInfo.file}\nPattern: ${suspiciousMatchInfo.pattern}`);
-            } else {
-                showResult('valid', '[Valid]\n\nValidation passed! Your username format is correct and no banned words were detected.');
+                if (suspiciousMatchData) {
+                    renderResult('suspicious', `[Suspicious]\n\nUsername matched a pattern in local dictionaries. This is logged for review but does not block validation.\nMatched Local File: ${suspiciousMatchData.filePath}\nMatched Rule: ${suspiciousMatchData.rule}`);
+                    restoreUI();
+                    return;
+                }
             }
-
-        } catch (e) {
-            showResult('invalid', `[Error]\n\nFailed to check banned words: ${e.message}`);
+        } catch (error) {
+            console.warn(`Local dictionary check failed: ${error.message}`);
         }
 
-        resetBtn();
+        // --- PHASE 4: Final Resolution ---
+        renderResult('valid', '[Valid]\n\nValidation passed successfully. The syntax is correct and no dictionary violations were detected.');
+        restoreUI();
 
-        function showResult(type, text) {
-            resBox.className = `result ${type}`;
-            resBox.textContent = text;
+        /**
+         * Renders the validation output to the DOM.
+         */
+        function renderResult(stateClass, message) {
+            resBox.className = `result ${stateClass}`;
+            resBox.textContent = message;
             resBox.style.display = 'block';
         }
 
-        function resetBtn() {
+        /**
+         * Restores the button to its default state post-execution.
+         */
+        function restoreUI() {
             btn.disabled = false;
-            btn.textContent = 'Проверить';
+            btn.textContent = 'Validate';
         }
     }
 </script>
