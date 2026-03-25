@@ -142,34 +142,9 @@ jobs:
               }
             }
 
-            if (errors.length === 0) {
-              const login = issue.user.login;
+            // (rotation logic runs after labeling below)
 
-              const allIssues = await github.paginate(github.rest.issues.listForRepo, {
-                owner:    context.repo.owner,
-                repo:     context.repo.repo,
-                state:    'all',
-                per_page: 100,
-              });
-
-              const RE_CHECK = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,40})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
-
-              const validFromAuthor = allIssues.filter(i =>
-                i.number !== issue.number &&
-                i.user?.login === login &&
-                (i.title || '').trim().length <= MAX_LEN &&
-                RE_CHECK.test((i.title || '').trim()) &&
-                i.labels.some(l => l.name === 'Valid')
-              );
-
-              if (validFromAuthor.length >= 2) {
-                errors.push(
-                  `- You already have **${validFromAuthor.length}** accepted issues. Maximum per user is **2**. Your existing accepted issues remain valid.`
-                );
-              }
-            }
-
-            for (const [name, color] of [['Valid', '0E8A16'], ['Invalid', 'D93F0B'], ['Suspicious', 'FBCA04']]) {
+            for (const [name, color] of [['Valid', '0E8A16'], ['Invalid', 'D93F0B'], ['Suspicious', 'FBCA04'], ['Stopped', '1E90FF']]) {
               try {
                 await github.rest.issues.getLabel({
                   owner: context.repo.owner, repo: context.repo.repo, name
@@ -204,6 +179,56 @@ jobs:
                 owner: context.repo.owner, repo: context.repo.repo,
                 issue_number: issue.number, body: commentBody
               });
+
+              // Rotate old Valid issues: keep only the 2 most recent
+              const login = issue.user.login;
+
+              const allIssues = await github.paginate(github.rest.issues.listForRepo, {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                state: 'all',
+                per_page: 100,
+              });
+
+              const RE_CHECK = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,40})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
+
+              const validFromAuthor = allIssues
+                .filter(i =>
+                  i.user?.login === login &&
+                  (i.title || '').trim().length <= MAX_LEN &&
+                  RE_CHECK.test((i.title || '').trim()) &&
+                  i.labels.some(l => l.name === 'Valid')
+                )
+                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
+              if (validFromAuthor.length > 2) {
+                const toStop = validFromAuthor.slice(2);
+
+                for (const old of toStop) {
+                  try {
+                    await github.rest.issues.removeLabel({
+                      owner: context.repo.owner,
+                      repo: context.repo.repo,
+                      issue_number: old.number,
+                      name: 'Valid'
+                    });
+                  } catch (_) {}
+
+                  await github.rest.issues.addLabels({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: old.number,
+                    labels: ['Stopped']
+                  });
+
+                  await github.rest.issues.createComment({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    issue_number: old.number,
+                    body: `⏹ This issue has been replaced by a newer entry (#${issue.number}) and is no longer displayed on the badge.`
+                  });
+                }
+              }
 
             } else {
               await github.rest.issues.addLabels({
