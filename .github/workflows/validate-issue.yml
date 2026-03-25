@@ -169,7 +169,7 @@ jobs:
               }
             }
 
-            for (const [name, color] of [['Valid', '0E8A16'], ['Invalid', 'D93F0B']]) {
+            for (const [name, color] of [['Valid', '0E8A16'], ['Invalid', 'D93F0B'], ['Suspicious', 'FBCA04']]) {
               try {
                 await github.rest.issues.getLabel({
                   owner: context.repo.owner, repo: context.repo.repo, name
@@ -240,6 +240,10 @@ jobs:
 
                   const suspiciousMatch = localPatterns.find(p => matchPattern(p, localInput));
                   if (suspiciousMatch) {
+                  await github.rest.issues.addLabels({
+                      owner: context.repo.owner, repo: context.repo.repo,
+                      issue_number: issue.number, labels: ['Suspicious']
+                    });
                     await github.rest.issues.createComment({
                       owner: context.repo.owner, repo: context.repo.repo,
                       issue_number: issue.number,
