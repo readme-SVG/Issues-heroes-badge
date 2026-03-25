@@ -71,54 +71,74 @@ jobs:
                 }
               }
 
-              const bannedDir = path.join(process.env.GITHUB_WORKSPACE, 'banned-words');
-              if (fs.existsSync(bannedDir) && fs.statSync(bannedDir).isDirectory()) {
-                const files = fs.readdirSync(bannedDir).filter(f => f.endsWith('.txt'));
-                const patterns = [];
+              function matchPattern(pattern, str) {
+                if (pattern.includes('&&')) {
+                  const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
+                  return parts.every(p => matchPattern(p, str));
+                }
 
-                for (const file of files) {
-                  const content = fs.readFileSync(path.join(bannedDir, file), 'utf8');
-                  content
-                    .split('\n')
+                if (pattern.includes('*') || pattern.includes('+')) {
+                  const reStr = pattern
+                    .replace(/[.^${}()|[\]\\]/g, '\\$&')
+                    .replace(/\*/g, '[\\s\\S]*')
+                    .replace(/\+/g, '[^\\s]+');
+
+                  const startsWild = pattern[0] === '*' || pattern[0] === '+';
+                  const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
+
+                  let re;
+                  if (startsWild || endsWild) {
+                    try { re = new RegExp(reStr, 'i'); } catch { return false; }
+                    return re.test(str);
+                  } else {
+                    try { re = new RegExp('^' + reStr + '$', 'i'); } catch { return false; }
+                    return re.test(str);
+                  }
+                }
+
+                return str === pattern;
+              }
+
+              const input = heroName.toLowerCase();
+
+              // Check against remote Banned-words-list/ for Valid/Invalid decision
+              const bannedRepo = process.env.BANNED_WORDS_REPO || 'readme-SVG/Banned-words';
+              const bannedBranch = process.env.BANNED_WORDS_BRANCH || 'main';
+              try {
+                const treeRes = await fetch(
+                  `https://api.github.com/repos/${bannedRepo}/git/trees/${bannedBranch}?recursive=1`,
+                  { headers: { 'User-Agent': 'issue-validator' } }
+                );
+                if (!treeRes.ok) throw new Error(`tree fetch failed: ${treeRes.status}`);
+
+                const tree = await treeRes.json();
+                const txtFiles = (tree.tree || []).filter(
+                  f => f.type === 'blob' && f.path.startsWith('Banned-words-list/') && f.path.endsWith('.txt')
+                );
+
+                const contents = await Promise.all(
+                  txtFiles.map(f =>
+                    fetch(
+                      `https://raw.githubusercontent.com/${bannedRepo}/${bannedBranch}/${f.path}`,
+                      { headers: { 'User-Agent': 'issue-validator' } }
+                    ).then(r => r.ok ? r.text() : '')
+                  )
+                );
+
+                const remotePatterns = [];
+                for (const text of contents) {
+                  text.split('\n')
                     .map(l => l.trim().toLowerCase())
                     .filter(Boolean)
-                    .forEach(line => patterns.push(line));
+                    .forEach(p => remotePatterns.push(p));
                 }
 
-                const input = heroName.toLowerCase();
-
-                function matchPattern(pattern, str) {
-                  if (pattern.includes('&&')) {
-                    const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
-                    return parts.every(p => matchPattern(p, str));
-                  }
-
-                  if (pattern.includes('*') || pattern.includes('+')) {
-                    const reStr = pattern
-                      .replace(/[.^${}()|[\]\\]/g, '\\$&')
-                      .replace(/\*/g, '[\\s\\S]*')
-                      .replace(/\+/g, '[^\\s]+');
-
-                    const startsWild = pattern[0] === '*' || pattern[0] === '+';
-                    const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
-
-                    let re;
-                    if (startsWild || endsWild) {
-                      try { re = new RegExp(reStr, 'i'); } catch { return false; }
-                      return re.test(str);
-                    } else {
-                      try { re = new RegExp('^' + reStr + '$', 'i'); } catch { return false; }
-                      return re.test(str);
-                    }
-                  }
-
-                  return str === pattern;
-                }
-
-                const found = patterns.find(p => matchPattern(p, input));
+                const found = remotePatterns.find(p => matchPattern(p, input));
                 if (found) {
                   errors.push('- Username contains a banned word.');
                 }
+              } catch (e) {
+                console.warn(`Failed to fetch remote banned words: ${e.message}`);
               }
             }
 
@@ -202,4 +222,31 @@ jobs:
                 issue_number: issue.number,
                 body: '❌ **Validation failed.** Please edit your issue to fix the following:\n\n' + errors.join('\n')
               });
+            }
+
+            // Suspicious check: local banned-words/ (informational only, no label change)
+            if (heroName) {
+              const bannedDir = path.join(process.env.GITHUB_WORKSPACE, 'banned-words');
+              if (fs.existsSync(bannedDir) && fs.statSync(bannedDir).isDirectory()) {
+                const localFiles = fs.readdirSync(bannedDir).filter(f => f.endsWith('.txt'));
+                const localInput = heroName.toLowerCase();
+
+                for (const file of localFiles) {
+                  const content = fs.readFileSync(path.join(bannedDir, file), 'utf8');
+                  const localPatterns = content
+                    .split('\n')
+                    .map(l => l.trim().toLowerCase())
+                    .filter(Boolean);
+
+                  const suspiciousMatch = localPatterns.find(p => matchPattern(p, localInput));
+                  if (suspiciousMatch) {
+                    await github.rest.issues.createComment({
+                      owner: context.repo.owner, repo: context.repo.repo,
+                      issue_number: issue.number,
+                      body: `⚠️ **Suspicious:** Username matched a pattern in local dictionaries (file: \`banned-words/${file}\`, pattern: \`${suspiciousMatch}\`). This does not affect validation status — it is logged for manual review only.`
+                    });
+                    break;
+                  }
+                }
+              }
             }

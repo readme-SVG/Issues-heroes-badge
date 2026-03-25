@@ -140,7 +140,7 @@ const BANNED_CACHE_TTL = 60_000;
 /**
  * Loads banned-word patterns from the configured GitHub repository with TTL caching.
  *
- * The loader retrieves every `.txt` file under `Hard-Banned-words-list/`,
+ * The loader retrieves every `.txt` file under `Banned-words-list/`,
  * normalizes each entry to lowercase, removes duplicates, and stores the result
  * in a short-lived in-memory cache to reduce GitHub API traffic on repeated
  * requests.
@@ -178,7 +178,7 @@ async function loadBannedPatterns() {
 
         const tree = await treeRes.json();
         const txtFiles = (tree.tree || []).filter(
-            f => f.type === 'blob' && f.path.startsWith('Hard-Banned-words-list/') && f.path.endsWith('.txt')
+            f => f.type === 'blob' && f.path.startsWith('Banned-words-list/') && f.path.endsWith('.txt')
         );
 
         const contents = await Promise.all(
