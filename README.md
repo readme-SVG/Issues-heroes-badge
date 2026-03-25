@@ -20,7 +20,7 @@ A serverless logging-style visualization library that converts validated GitHub 
 
 ## Example in Markdown:
 
-![Heroes Board](https://issues-heroes-badge.vercel.app/api?user=readme-SVG&repo=Issues-heroes-badge)
+[![Heroes Board](https://issues-heroes-badge.vercel.app/api?user=readme-SVG&repo=Issues-heroes-badge)](https://github.com/OstinUA)
 
 </div>
 
