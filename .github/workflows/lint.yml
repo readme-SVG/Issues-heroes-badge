@@ -4,28 +4,34 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: lint-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions: read-all
+
 jobs:
   lint:
     runs-on: ubuntu-latest
-    permissions:
-      # IMPORTANT: Allow the bot to push changes to the repository
-      contents: write 
+    timeout-minutes: 15
 
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          # IMPORTANT: Specify the PR branch so the bot can push the file there
-          ref: ${{ github.head_ref }} 
+          ref: ${{ github.head_ref }}
 
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
           node-version: '20'
-          # The 'cache: npm' line is removed so the script doesn't fail if the lockfile is missing
 
-      - name: Install dependencies and generate lockfile
+      - name: Install dependencies
         run: |
+          if [ ! -f package.json ]; then
+            echo "No package.json found. Skipping npm install."
+            exit 0
+          fi
           if [ -f package-lock.json ]; then
             echo "package-lock.json found. Running fast install (npm ci)..."
             npm ci
@@ -34,25 +40,20 @@ jobs:
             npm install --no-audit --no-fund
           fi
 
-      - name: Commit and push package-lock.json if newly created
-        run: |
-          # Check if there are new or modified files (specifically package-lock.json)
-          if [[ -n $(git status -s package-lock.json) ]]; then
-            echo "Saving the new package-lock.json to the repository..."
-            git config --local user.email "github-actions[bot]@users.noreply.github.com"
-            git config --local user.name "github-actions[bot]"
-            git add package-lock.json
-            git commit -m "chore: auto-generate package-lock.json"
-            git push
-          else
-            echo "package-lock.json has not changed. No commit required."
-          fi
-
       - name: Run project lint script when available
-        run: npm run lint --if-present
+        run: |
+          if [ -f package.json ]; then
+            npm run lint --if-present
+          else
+            echo "No package.json found. Skipping lint."
+          fi
 
       - name: Validate JavaScript syntax
         run: |
-          while IFS= read -r -d '' file; do
-            node --check "$file"
-          done < <(find api -type f -name '*.js' -print0)
+          if [ -d api ]; then
+            while IFS= read -r -d '' file; do
+              node --check "$file"
+            done < <(find api -type f -name '*.js' -print0)
+          else
+            echo "No api/ directory found. Skipping JavaScript syntax validation."
+          fi
