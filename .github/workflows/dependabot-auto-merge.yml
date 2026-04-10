@@ -4,17 +4,23 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
 
+permissions: read-all
+
+concurrency:
+  group: dependabot-merge-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
 jobs:
   automerge:
     if: github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
       pull-requests: write
 
     steps:
       - name: Fetch Dependabot metadata
-      # No environment variables are required for this action.
         id: metadata
         uses: dependabot/fetch-metadata@v2
         with:
@@ -26,7 +32,6 @@ jobs:
           (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
            steps.metadata.outputs.update-type == 'version-update:semver-minor')
         env:
-          # Uses the workflow-scoped token to approve Dependabot PRs.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr review "${{ github.event.pull_request.number }}" --approve
 
@@ -36,6 +41,5 @@ jobs:
           (steps.metadata.outputs.update-type == 'version-update:semver-patch' ||
            steps.metadata.outputs.update-type == 'version-update:semver-minor')
         env:
-          # Uses the workflow-scoped token to enable GitHub auto-merge.
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh pr merge "${{ github.event.pull_request.number }}" --auto --merge
