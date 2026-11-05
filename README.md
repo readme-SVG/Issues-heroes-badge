@@ -74,8 +74,19 @@ A serverless logging-style visualization library that converts validated GitHub 
 ```text
 .
 ├── api/
-│   └── index.js                 # Main serverless handler and rendering pipeline
+│   └── index.js                 # Serverless entry point: request handling and response headers
+├── lib/
+│   ├── badge-svg.js             # SVG layout, animation timings and the error badge
+│   ├── dictionaries.js          # Remote dictionary loading, TTL cache, single-flight
+│   ├── entries.js               # Admission rules: labels, quotas, de-duplication, moderation
+│   ├── github.js                # GitHub REST client: timeouts, headers, typed errors
+│   ├── issue-title.js           # The `<HeroeName|Name|#RRGGBB>` contract
+│   ├── patterns.js              # Wildcard matcher (`*`, `+`, `&&`) without backtracking
+│   └── xml.js                   # XML escaping for user-supplied text
+├── docs/                        # Static validator page served by GitHub Pages
+├── test/                        # Unit tests for the parsing, matching and rendering layers
 ├── banned-words/                # Local word lists (reference/data assets)
+├── trigger action/              # Workflow automation for AI-assisted issue reports
 ├── LICENSE
 ├── package.json
 └── README.md
@@ -130,23 +141,24 @@ npm install
 
 ## Testing
 
-This repository currently ships without a configured automated test suite. Use the commands below as operational checks and baseline quality gates.
+The badge pipeline is covered by unit tests that run on the Node.js built-in test
+runner — no extra dependencies are required.
 
 ```bash
-# Dependency integrity check
-npm install
-
-# Package script status (currently placeholder in package.json)
+npm ci
 npm test
-
-# Optional local smoke test if you run a local serverless emulator
-# (example for Vercel CLI users)
-# npx vercel dev
-# curl "http://localhost:3000/api?user=readme-SVG&repo=Issues-heroes-badge"
 ```
 
-> [!WARNING]
-> `npm test` is currently a placeholder command and exits with a non-zero status by default. Replace it with real unit/integration/lint scripts for CI readiness.
+The suite exercises the issue-title grammar, the pattern engine (including
+adversarial input), admission rules and SVG escaping. CI runs the same command for
+every pull request.
+
+For a local end-to-end check, use the Vercel CLI:
+
+```bash
+npx vercel dev
+curl "http://localhost:3000/api?user=readme-SVG&repo=Issues-heroes-badge"
+```
 
 ## Deployment
 

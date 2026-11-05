@@ -2,303 +2,94 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Issue Format Validator</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-            background-color: #0d1117;
-            color: #c9d1d9;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            height: 100vh;
-            margin: 0;
-        }
-        .container {
-            background-color: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            padding: 24px;
-            width: 100%;
-            max-width: 600px;
-            box-shadow: 0 8px 24px rgba(0,0,0,0.2);
-        }
-        h2 {
-            margin-top: 0;
-            font-size: 20px;
-            border-bottom: 1px solid #21262d;
-            padding-bottom: 8px;
-        }
-        input[type="text"] {
-            width: 100%;
-            padding: 10px;
-            margin: 10px 0;
-            background-color: #0d1117;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            color: #c9d1d9;
-            box-sizing: border-box;
-            font-family: monospace;
-        }
-        button {
-            background-color: #238636;
-            color: #ffffff;
-            border: 1px solid rgba(240, 246, 252, 0.1);
-            padding: 8px 16px;
-            border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-        }
-        button:hover {
-            background-color: #2ea043;
-        }
-        button:disabled {
-            background-color: #1b4b23;
-            color: #8b949e;
-            cursor: not-allowed;
-        }
-        .result {
-            margin-top: 20px;
-            padding: 15px;
-            border-radius: 6px;
-            display: none;
-            white-space: pre-wrap;
-            font-family: monospace;
-            line-height: 1.5;
-        }
-        .valid { background-color: rgba(46, 160, 67, 0.15); border: 1px solid #2ea043; color: #3fb950; }
-        .invalid { background-color: rgba(248, 81, 73, 0.1); border: 1px solid #f85149; color: #ff7b72; }
-        .suspicious { background-color: rgba(210, 153, 34, 0.15); border: 1px solid #d29922; color: #e3b341; }
-    </style>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Check an issue title against the format and dictionaries used by the Issues-heroes-badge workflow.">
+    <meta name="referrer" content="no-referrer">
+    <title>Issue Format Validator · Issues-heroes-badge</title>
+    <link rel="stylesheet" href="validator.css">
 </head>
 <body>
+    <main class="container">
+        <h1>Issue Format Validator</h1>
+        <p class="lead">
+            Paste the issue title you are about to submit. The check runs against the same
+            format and dictionaries the workflow uses.
+        </p>
 
-<div class="container">
-    <h2>Issue Format Validator</h2>
-    <p>Enter the Issue title for local validation:</p>
-    <input type="text" id="issueInput" placeholder="<HeroeName|Username|#FF0000>" autocomplete="off">
-    <button id="checkBtn" onclick="checkIssue()">Validate</button>
+        <form id="validator-form" novalidate>
+            <label class="visually-hidden" for="issue-title">Issue title</label>
+            <input
+                id="issue-title"
+                type="text"
+                inputmode="text"
+                placeholder="&lt;HeroeName|Username|#FF0000&gt;"
+                autocomplete="off"
+                spellcheck="false"
+                maxlength="120"
+                required
+            >
+            <button id="validate" type="submit">Validate</button>
+        </form>
 
-    <div id="resultBox" class="result"></div>
-</div>
+        <p id="result" class="result" role="status" aria-live="polite" hidden></p>
 
-<script>
-    /**
-     * Local repository configuration (for Suspicious check).
-     */
-    const LOCAL_REPO_OWNER = 'readme-SVG';
-    const LOCAL_REPO_NAME = 'Issues-heroes-badge';
-    const LOCAL_BRANCH = 'main';
+        <details class="hint">
+            <summary>Accepted formats</summary>
+            <ul>
+                <li><code>&lt;HeroeName|Username&gt;</code> — colour is picked automatically</li>
+                <li><code>&lt;HeroeName|Username|#RGB&gt;</code> or <code>#RRGGBB</code></li>
+                <li>Names are limited to 40 characters; titles to 60.</li>
+            </ul>
+        </details>
+    </main>
 
-    /**
-     * Global banned words repository configuration (for Invalid check).
-     */
-    const GLOBAL_REPO_OWNER = 'readme-SVG';
-    const GLOBAL_REPO_NAME = 'Banned-words';
-    const GLOBAL_BRANCH = 'main';
+    <script type="module">
+        import { validateTitle } from './validator.js';
 
-    /**
-     * Evaluates whether a given string matches a specific pattern.
-     * Supports wildcard matching ('*' and '+') and logical AND ('&&') operations.
-     */
-    function matchPattern(pattern, str) {
-        if (pattern.includes('&&')) {
-            const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
-            return parts.every(p => matchPattern(p, str));
+        const form = document.getElementById('validator-form');
+        const input = document.getElementById('issue-title');
+        const button = document.getElementById('validate');
+        const output = document.getElementById('result');
+
+        let requestId = 0;
+
+        function render(state, lines) {
+            output.hidden = false;
+            output.dataset.state = state;
+            output.textContent = lines.join('\n');
         }
 
-        if (pattern.includes('*') || pattern.includes('+')) {
-            const reStr = pattern
-                .replace(/[.^${}()|[\]\\]/g, '\\$&')
-                .replace(/\*/g, '[\\s\\S]*')
-                .replace(/\+/g, '[^\\s]+');
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
 
-            const startsWithWildcard = pattern[0] === '*' || pattern[0] === '+';
-            const endsWithWildcard = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
-
-            let regex;
-            if (startsWithWildcard || endsWithWildcard) {
-                try { regex = new RegExp(reStr, 'i'); } catch { return false; }
-                return regex.test(str);
-            } else {
-                try { regex = new RegExp('^' + reStr + '$', 'i'); } catch { return false; }
-                return regex.test(str);
-            }
-        }
-        return str === pattern;
-    }
-
-    /**
-     * Core validation controller.
-     * Implements the exact cascade logic from the GitHub Actions workflow.
-     */
-    async function checkIssue() {
-        const title = document.getElementById('issueInput').value.trim();
-        const btn = document.getElementById('checkBtn');
-        const resBox = document.getElementById('resultBox');
-        
-        if (!title) return;
-
-        // UI state update: processing lock
-        btn.disabled = true;
-        btn.textContent = 'Validating...';
-        resBox.style.display = 'none';
-        resBox.className = 'result';
-        resBox.innerHTML = '';
-
-        let errors = [];
-        const MAX_LEN = 60;
-        
-        // --- PHASE 1: Syntax and Format Validation ---
-        
-        if (title.length > MAX_LEN) {
-            errors.push(`Issue title exceeds maximum length (${title.length}/${MAX_LEN} characters).`);
-        }
-
-        const formatRegex = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,40})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
-        const match = title.length <= MAX_LEN ? title.match(formatRegex) : null;
-
-        let heroName = '';
-
-        if (!match) {
-            if (title.length <= MAX_LEN) {
-                errors.push('Strict format required: `<HeroeName|Username>` or `<HeroeName|Username|#RRGGBB>`. Extraneous characters are prohibited.');
-            }
-        } else {
-            heroName = match[1].trim();
-            const color = match[2];
-
-            if (!heroName || heroName.length === 0) {
-                errors.push('The Username payload cannot be empty.');
-            }
-            if (heroName.length > 40) {
-                errors.push(`Username exceeds maximum length (${heroName.length}/40 characters).`);
-            }
-            if (/[^a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]/.test(heroName)) {
-                errors.push('Username contains illegal characters. Permitted sets: alphanumeric (Latin/Cyrillic), spaces, underscores, hyphens, and standard punctuation (. ! , ? : ; \').');
+            const title = input.value.trim();
+            if (!title) {
+                input.focus();
+                return;
             }
 
-            if (color !== undefined) {
-                if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {
-                    errors.push(`Invalid color hex code: \`${color}\`. Expected format: \`#RGB\` or \`#RRGGBB\`.`);
+            // Only the newest run may write to the DOM: dictionary downloads can
+            // take a second and an earlier run must not overwrite a later one.
+            const current = (requestId += 1);
+
+            button.disabled = true;
+            button.textContent = 'Checking…';
+            output.hidden = true;
+
+            try {
+                const result = await validateTitle(title);
+                if (current === requestId) render(result.state, result.lines);
+            } catch (error) {
+                if (current === requestId) {
+                    render('unknown', [`Validation could not run: ${error.message}`]);
+                }
+            } finally {
+                if (current === requestId) {
+                    button.disabled = false;
+                    button.textContent = 'Validate';
                 }
             }
-        }
-
-        // Halt execution if syntax is invalid
-        if (errors.length > 0) {
-            renderResult('invalid', '[Invalid]\n\nSyntax errors detected:\n- ' + errors.join('\n- '));
-            restoreUI();
-            return;
-        }
-
-        const normalizedInput = heroName.toLowerCase();
-
-        // --- PHASE 2: Global Dictionary Validation (Strict Ban) ---
-        try {
-            const globalTreeUrl = `https://api.github.com/repos/${GLOBAL_REPO_OWNER}/${GLOBAL_REPO_NAME}/git/trees/${GLOBAL_BRANCH}?recursive=1`;
-            const globalTreeRes = await fetch(globalTreeUrl);
-            
-            if (globalTreeRes.ok) {
-                const globalTreeData = await globalTreeRes.json();
-                const globalFiles = (globalTreeData.tree || []).filter(f => 
-                    f.type === 'blob' && f.path.startsWith('Banned-words-list/') && f.path.endsWith('.txt')
-                );
-
-                // Fetch global dictionary files concurrently
-                const globalContents = await Promise.all(
-                    globalFiles.map(f => fetch(`https://raw.githubusercontent.com/${GLOBAL_REPO_OWNER}/${GLOBAL_REPO_NAME}/${GLOBAL_BRANCH}/${f.path}`).then(r => r.ok ? r.text() : ''))
-                );
-
-                let globalMatchData = null;
-
-                for (let i = 0; i < globalContents.length; i++) {
-                    const patterns = globalContents[i].split('\n').map(line => line.trim().toLowerCase()).filter(Boolean);
-                    const matchedPattern = patterns.find(pattern => matchPattern(pattern, normalizedInput));
-                    
-                    if (matchedPattern) {
-                        globalMatchData = {
-                            filePath: globalFiles[i].path,
-                            rule: matchedPattern
-                        };
-                        break; // Terminate early on critical failure
-                    }
-                }
-
-                if (globalMatchData) {
-                    renderResult('invalid', `[Invalid]\n\nUsername contains a globally banned word.\nMatched Global File: ${globalMatchData.filePath}\nMatched Rule: ${globalMatchData.rule}`);
-                    restoreUI();
-                    return;
-                }
-            }
-        } catch (error) {
-            console.warn(`Global dictionary check failed: ${error.message}`);
-        }
-
-        // --- PHASE 3: Local Dictionary Validation (Suspicious Warning) ---
-        try {
-            const localTreeUrl = `https://api.github.com/repos/${LOCAL_REPO_OWNER}/${LOCAL_REPO_NAME}/git/trees/${LOCAL_BRANCH}?recursive=1`;
-            const localTreeRes = await fetch(localTreeUrl);
-            
-            if (localTreeRes.ok) {
-                const localTreeData = await localTreeRes.json();
-                const localFiles = (localTreeData.tree || []).filter(f => 
-                    f.type === 'blob' && f.path.startsWith('banned-words/') && f.path.endsWith('.txt')
-                );
-
-                // Fetch local dictionary files concurrently
-                const localContents = await Promise.all(
-                    localFiles.map(f => fetch(`https://raw.githubusercontent.com/${LOCAL_REPO_OWNER}/${LOCAL_REPO_NAME}/${LOCAL_BRANCH}/${f.path}`).then(r => r.ok ? r.text() : ''))
-                );
-
-                let suspiciousMatchData = null;
-
-                for (let i = 0; i < localContents.length; i++) {
-                    const patterns = localContents[i].split('\n').map(line => line.trim().toLowerCase()).filter(Boolean);
-                    const matchedPattern = patterns.find(pattern => matchPattern(pattern, normalizedInput));
-                    
-                    if (matchedPattern) {
-                        suspiciousMatchData = {
-                            filePath: localFiles[i].path,
-                            rule: matchedPattern
-                        };
-                        break;
-                    }
-                }
-
-                if (suspiciousMatchData) {
-                    renderResult('suspicious', `[Suspicious]\n\nUsername matched a pattern in local dictionaries. This is logged for review but does not block validation.\nMatched Local File: ${suspiciousMatchData.filePath}\nMatched Rule: ${suspiciousMatchData.rule}`);
-                    restoreUI();
-                    return;
-                }
-            }
-        } catch (error) {
-            console.warn(`Local dictionary check failed: ${error.message}`);
-        }
-
-        // --- PHASE 4: Final Resolution ---
-        renderResult('valid', '[Valid]\n\nValidation passed successfully. The syntax is correct and no dictionary violations were detected.');
-        restoreUI();
-
-        /**
-         * Renders the validation output to the DOM.
-         */
-        function renderResult(stateClass, message) {
-            resBox.className = `result ${stateClass}`;
-            resBox.textContent = message;
-            resBox.style.display = 'block';
-        }
-
-        /**
-         * Restores the button to its default state post-execution.
-         */
-        function restoreUI() {
-            btn.disabled = false;
-            btn.textContent = 'Validate';
-        }
-    }
-</script>
-
+        });
+    </script>
 </body>
 </html>

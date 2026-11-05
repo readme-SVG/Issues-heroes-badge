@@ -5,21 +5,29 @@ on:
     branches:
       - main
     paths:
-      - '.github/labels.yml'
+      - .github/labels.yml
   workflow_dispatch:
 
 permissions: read-all
 
+concurrency:
+  group: label-sync
+  cancel-in-progress: false
+
 jobs:
   sync:
+    name: Sync labels
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      contents: read
       issues: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Sync labels
         uses: EndBug/add-and-update-labels@v1

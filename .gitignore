@@ -1,0 +1,23 @@
+# Dependencies and build output
+node_modules/
+.vercel/
+
+# Python bytecode produced by the automation script
+__pycache__/
+*.py[cod]
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Editor and OS noise
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Local tooling caches
+.npm/
+.cache/
+coverage/

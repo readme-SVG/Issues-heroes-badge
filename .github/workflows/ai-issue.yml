@@ -15,8 +15,15 @@ concurrency:
 
 jobs:
   analyze_code:
+    name: Analyse change
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
+    # Secrets are not exposed to fork pull requests, and the script cannot do
+    # anything useful without them, so those runs are skipped up front instead
+    # of failing inside the analysis step.
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+
     permissions:
       contents: read
       issues: write
@@ -25,6 +32,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -32,10 +41,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: |
-          pip install --no-cache-dir PyGithub==2.5.0 requests==2.32.3
+        run: pip install --no-cache-dir PyGithub==2.5.0 requests==2.32.3
 
-      - name: Run AI Analysis
+      - name: Run AI analysis
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
