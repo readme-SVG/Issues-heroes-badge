@@ -5,55 +5,61 @@ on:
     - cron: '0 3 * * 1'
   workflow_dispatch:
 
+permissions: read-all
+
+concurrency:
+  group: sync-banned-words
+  cancel-in-progress: false
+
 jobs:
   sync:
+    name: Sync dictionaries
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
       contents: write
 
     steps:
-      - name: Checkout Issues-heroes-badge
+      - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          path: target
+          persist-credentials: true
 
-      - name: Fetch Hard-Banned-words-list from Banned-words repo
+      - name: Fetch dictionaries from the upstream repository
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FILES=$(gh api \
-            repos/readme-SVG/Banned-words/contents/Hard-Banned-words-list \
-            --jq '.[].name' \
-            -H "Accept: application/vnd.github+json")
-
+          set -euo pipefail
           mkdir -p _hard_banned
 
-          for FILE in $FILES; do
-            gh api \
-              repos/readme-SVG/Banned-words/contents/Hard-Banned-words-list/$FILE \
-              --jq '.content' | base64 -d > "_hard_banned/$FILE"
-          done
+          # Only files that already live inside the directory are downloaded; the
+          # listing comes from the API so renames upstream are picked up as-is.
+          gh api \
+            "repos/readme-SVG/Banned-words/contents/Hard-Banned-words-list" \
+            --jq '.[] | select(.type == "file" and (.name | endswith(".txt"))) | .name' \
+          | while IFS= read -r file; do
+              gh api \
+                "repos/readme-SVG/Banned-words/contents/Hard-Banned-words-list/${file}" \
+                --jq '.content' | base64 -d > "_hard_banned/${file}"
+            done
 
-      - name: Sync files into banned-words/ (keep note.md)
+      - name: Replace local dictionaries
         run: |
-          cd target
-          find banned-words/ -maxdepth 1 -name '*.txt' -delete
-          for FILE in ../_hard_banned/*; do
-            BASENAME=$(basename "$FILE")
-            if [ "$BASENAME" != "note.md" ]; then
-              cp "$FILE" "banned-words/$BASENAME"
-            fi
-          done
+          set -euo pipefail
+          find banned-words -maxdepth 1 -name '*.txt' -delete
+          cp _hard_banned/*.txt banned-words/
 
-      - name: Commit and push if changed
+      - name: Commit changes
         run: |
-          cd target
+          set -euo pipefail
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add banned-words/
+          git add -- banned-words
+
           if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -m "chore: sync hard-banned words for suspicious checks [$(date -u '+%Y-%m-%d')]"
-            git push
+            echo "Dictionaries are already up to date."
+            exit 0
           fi
+
+          git commit -m "chore: sync banned-word dictionaries"
+          git push origin HEAD

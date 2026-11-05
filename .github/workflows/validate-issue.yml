@@ -4,278 +4,342 @@ on:
   issues:
     types: [opened, edited]
 
+permissions: read-all
+
+concurrency:
+  group: validate-issue-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
 jobs:
   validate:
+    name: Validate issue format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     permissions:
-      issues: write
       contents: read
+      issues: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Validate Issue Format
+      - name: Validate title and apply labels
         uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs   = require('fs');
+            const fs = require('fs');
             const path = require('path');
 
+            const MAX_TITLE_LENGTH = 60;
+            const MAX_NAME_LENGTH = 40;
+            const MAX_LABELLED_ISSUES = 2;
+            const DICTIONARY_DIRECTORY = 'banned-words';
+            const DICTIONARY_EXTENSION = '.txt';
+
+            const TITLE_RE = new RegExp(
+              "^<\\s*HeroeName\\s*\\|\\s*([a-zA-Z\\u0400-\\u04FF0-9_ .!,?:;'-]{1,40})\\s*" +
+                "(?:\\|\\s*(#[0-9a-fA-F]{3}|#[0-9a-fA-F]{6})\\s*)?>\\s*$",
+              'i'
+            );
+
+            const LABELS = [
+              { name: 'Valid', color: '0E8A16', description: 'Issue title passed validation' },
+              { name: 'Invalid', color: 'D93F0B', description: 'Issue title failed validation' },
+              { name: 'Suspicious', color: 'FBCA04', description: 'Matched a local dictionary entry' },
+              { name: 'Stopped', color: '1E90FF', description: 'Replaced by a newer submission' },
+            ];
+
+            // --- pattern engine -------------------------------------------------
+            // Wildcard rules are matched with a dynamic-programming table instead
+            // of a RegExp: `*`-expanded patterns backtrack, so one hostile entry
+            // would stall the runner.
+            const STAR = 1;
+            const PLUS = 2;
+            const WHITESPACE = new Set(
+              ' \t\n\v\f\r\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'
+            );
+
+            function matchTokens(tokens, chars) {
+              const length = chars.length;
+              let next = new Uint8Array(length + 1);
+              let current = new Uint8Array(length + 1);
+              next[length] = 1;
+
+              for (let i = tokens.length - 1; i >= 0; i -= 1) {
+                current.fill(0);
+                const token = tokens[i];
+
+                if (token === STAR) {
+                  current[length] = next[length];
+                  for (let j = length - 1; j >= 0; j -= 1) current[j] = next[j] | current[j + 1];
+                } else if (token === PLUS) {
+                  for (let j = length - 1; j >= 0; j -= 1) {
+                    current[j] = WHITESPACE.has(chars[j]) ? 0 : next[j + 1] | current[j + 1];
+                  }
+                } else {
+                  for (let j = length - 1; j >= 0; j -= 1) current[j] = chars[j] === token ? next[j + 1] : 0;
+                }
+
+                const swap = next;
+                next = current;
+                current = swap;
+              }
+
+              return next[0] === 1;
+            }
+
+            function tokenize(rule) {
+              return Array.from(rule, (character) => {
+                if (character === '*') return STAR;
+                if (character === '+') return PLUS;
+                return character;
+              });
+            }
+
+            function compileRule(rule) {
+              const tokens = tokenize(rule.replace(/\*{2,}/g, '*'));
+              const head = tokens[0] === STAR;
+              const tail = tokens[tokens.length - 1] === STAR;
+              const body = tokens.slice(head ? 1 : 0, tail ? -1 : tokens.length);
+
+              if (body.length > 0 && body.every((token) => typeof token === 'string')) {
+                const literal = body.join('');
+                if (head && tail) return (value) => value.includes(literal);
+                if (head) return (value) => value.endsWith(literal);
+                if (tail) return (value) => value.startsWith(literal);
+                return (value) => value === literal;
+              }
+
+              return (value) => matchTokens(tokens, Array.from(value));
+            }
+
+            function compileDictionary(text) {
+              const rules = [];
+              const literals = new Set();
+              const matchers = [];
+
+              for (const line of text.split('\n')) {
+                const rule = line.trim().toLowerCase();
+                if (!rule) continue;
+
+                rules.push(rule);
+
+                if (!/[*+]/.test(rule) && !rule.includes('&&')) {
+                  literals.add(rule);
+                  continue;
+                }
+
+                const parts = rule.split('&&').map((part) => part.trim()).filter(Boolean);
+                if (parts.length === 0) continue;
+                const compiled = parts.map(compileRule);
+                matchers.push((value) => compiled.every((matcher) => matcher(value)));
+              }
+
+              const ruleMatchers = new Map();
+
+              return {
+                rules,
+                matches(value) {
+                  if (literals.has(value)) return true;
+                  return matchers.some((matcher) => matcher(value));
+                },
+                // Compiles a single rule lazily; used to report the exact entry
+                // that matched instead of a bare verdict.
+                matchesRule(rule, value) {
+                  if (!ruleMatchers.has(rule)) {
+                    const parts = rule.split('&&').map((part) => part.trim()).filter(Boolean);
+                    ruleMatchers.set(rule, parts.map(compileRule));
+                  }
+                  return ruleMatchers.get(rule).every((matcher) => matcher(value));
+                },
+              };
+            }
+
+            // --- validation -----------------------------------------------------
             const issue = context.payload.issue;
             const title = (issue.title || '').trim();
-            const body  = (issue.body  || '').trim();
+            const problems = [];
 
-            let errors = [];
-
-            const MAX_LEN = 60;
-            if (title.length > MAX_LEN) {
-              errors.push(`- Issue title is too long (${title.length} chars). Maximum allowed: ${MAX_LEN}.`);
+            if (title.length > MAX_TITLE_LENGTH) {
+              problems.push(`- Title is ${title.length} characters long; the limit is ${MAX_TITLE_LENGTH}.`);
             }
 
-            if (title !== body) {
-              errors.push('- Title and body must be exactly identical.');
+            const match = title.length <= MAX_TITLE_LENGTH ? title.match(TITLE_RE) : null;
+            const name = match ? match[1].trim() : '';
+
+            if (!match && title.length <= MAX_TITLE_LENGTH) {
+              problems.push(
+                '- The title must be exactly `<HeroeName|Username>` or `<HeroeName|Username|#RRGGBB>`.'
+              );
+            }
+            if (match && name.length > MAX_NAME_LENGTH) {
+              problems.push(`- Username is ${name.length} characters long; the limit is ${MAX_NAME_LENGTH}.`);
             }
 
-            const RE = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,40})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
-            const match = title.length <= MAX_LEN ? title.match(RE) : null;
+            const normalizedName = name.toLowerCase();
 
-            let hasColor = false;
-            let heroName = '';
+            const dictionaries = fs.existsSync(path.join(process.env.GITHUB_WORKSPACE, DICTIONARY_DIRECTORY))
+              ? fs
+                  .readdirSync(path.join(process.env.GITHUB_WORKSPACE, DICTIONARY_DIRECTORY))
+                  .filter((file) => file.endsWith(DICTIONARY_EXTENSION))
+                  .map((file) => ({
+                    file,
+                    dictionary: compileDictionary(
+                      fs.readFileSync(
+                        path.join(process.env.GITHUB_WORKSPACE, DICTIONARY_DIRECTORY, file),
+                        'utf8'
+                      )
+                    ),
+                  }))
+              : [];
 
-            if (!match) {
-              if (title.length <= MAX_LEN) {
-                errors.push(
-                  '- The content must be exactly `<HeroeName|Username>` or `<HeroeName|Username|#RRGGBB>` with no extra text.'
+            let suspicious = null;
+            if (normalizedName) {
+              for (const entry of dictionaries) {
+                const rule = entry.dictionary.rules.find((candidate) =>
+                  entry.dictionary.matchesRule(candidate, normalizedName)
                 );
-              }
-            } else {
-              heroName    = match[1].trim();
-              const color = match[2];
-
-              if (!heroName || heroName.length === 0) {
-                errors.push('- Username cannot be empty.');
-              }
-              if (heroName.length > 40) {
-                errors.push(`- Username is too long (${heroName.length} chars). Maximum: 40.`);
-              }
-              if (/[^a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]/.test(heroName)) {
-                errors.push('- Username contains invalid characters. Only letters (latin/cyrillic), numbers, spaces, underscores, hyphens, and punctuation (. ! , ? : ; \') are allowed.');
-              }
-
-              if (color !== undefined) {
-                hasColor = true;
-                if (!/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/.test(color)) {
-                  errors.push(`- Color \`${color}\` is not valid. Use \`#RGB\` or \`#RRGGBB\` (e.g. \`#FF0000\`).`);
+                if (rule) {
+                  suspicious = { file: entry.file, rule };
+                  break;
                 }
-              }
-
-              function matchPattern(pattern, str) {
-                if (pattern.includes('&&')) {
-                  const parts = pattern.split('&&').map(p => p.trim()).filter(Boolean);
-                  return parts.every(p => matchPattern(p, str));
-                }
-
-                if (pattern.includes('*') || pattern.includes('+')) {
-                  const reStr = pattern
-                    .replace(/[.^${}()|[\]\\]/g, '\\$&')
-                    .replace(/\*/g, '[\\s\\S]*')
-                    .replace(/\+/g, '[^\\s]+');
-
-                  const startsWild = pattern[0] === '*' || pattern[0] === '+';
-                  const endsWild   = pattern[pattern.length - 1] === '*' || pattern[pattern.length - 1] === '+';
-
-                  let re;
-                  if (startsWild || endsWild) {
-                    try { re = new RegExp(reStr, 'i'); } catch { return false; }
-                    return re.test(str);
-                  } else {
-                    try { re = new RegExp('^' + reStr + '$', 'i'); } catch { return false; }
-                    return re.test(str);
-                  }
-                }
-
-                return str === pattern;
-              }
-
-              const input = heroName.toLowerCase();
-
-              // Check against remote Banned-words-list/ for Valid/Invalid decision
-              const bannedRepo = process.env.BANNED_WORDS_REPO || 'readme-SVG/Banned-words';
-              const bannedBranch = process.env.BANNED_WORDS_BRANCH || 'main';
-              try {
-                const treeRes = await fetch(
-                  `https://api.github.com/repos/${bannedRepo}/git/trees/${bannedBranch}?recursive=1`,
-                  { headers: { 'User-Agent': 'issue-validator' } }
-                );
-                if (!treeRes.ok) throw new Error(`tree fetch failed: ${treeRes.status}`);
-
-                const tree = await treeRes.json();
-                const txtFiles = (tree.tree || []).filter(
-                  f => f.type === 'blob' && f.path.startsWith('Banned-words-list/') && f.path.endsWith('.txt')
-                );
-
-                const contents = await Promise.all(
-                  txtFiles.map(f =>
-                    fetch(
-                      `https://raw.githubusercontent.com/${bannedRepo}/${bannedBranch}/${f.path}`,
-                      { headers: { 'User-Agent': 'issue-validator' } }
-                    ).then(r => r.ok ? r.text() : '')
-                  )
-                );
-
-                const remotePatterns = [];
-                for (const text of contents) {
-                  text.split('\n')
-                    .map(l => l.trim().toLowerCase())
-                    .filter(Boolean)
-                    .forEach(p => remotePatterns.push(p));
-                }
-
-                const found = remotePatterns.find(p => matchPattern(p, input));
-                if (found) {
-                  errors.push('- Username contains a banned word.');
-                }
-              } catch (e) {
-                console.warn(`Failed to fetch remote banned words: ${e.message}`);
               }
             }
 
-            // (rotation logic runs after labeling below)
+            const isValid = problems.length === 0;
 
-            for (const [name, color] of [['Valid', '0E8A16'], ['Invalid', 'D93F0B'], ['Suspicious', 'FBCA04'], ['Stopped', '1E90FF']]) {
-              try {
-                await github.rest.issues.getLabel({
-                  owner: context.repo.owner, repo: context.repo.repo, name
-                });
-              } catch (_) {
-                await github.rest.issues.createLabel({
-                  owner: context.repo.owner, repo: context.repo.repo, name, color
-                });
-              }
-            }
-
-            const isValid = errors.length === 0;
-
-            if (isValid) {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: issue.number, labels: ['Valid']
-              });
-              try {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  issue_number: issue.number, name: 'Invalid'
-                });
-              } catch (_) {}
-
-              let commentBody = '✅ **Validation passed!** Your username will be added to the badge.';
-              if (!hasColor && heroName) {
-                commentBody += '\n\n💡 **Tip — want a custom color?**\nYou can also specify your own color by editing the issue to:\n```\n<HeroeName|' + heroName + '|#FF0000>\n```\nReplace `#FF0000` with any hex color you like (e.g. `#00FFAA`, `#3f88e6`).\nWithout a color, a random one is assigned automatically 🎨';
-              }
-
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: issue.number, body: commentBody
-              });
-
-              // Rotate old Valid issues: keep only the 2 most recent
-              const login = issue.user.login;
-
-              const allIssues = await github.paginate(github.rest.issues.listForRepo, {
+            // --- labels ---------------------------------------------------------
+            const existingLabels = new Set(
+              (await github.paginate(github.rest.issues.listLabelsForRepo, {
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                state: 'all',
                 per_page: 100,
-              });
+              })).map((label) => label.name)
+            );
 
-              const RE_CHECK = /^<\s*HeroeName\s*\|\s*([a-zA-Z\u0400-\u04FF0-9_ .!,?:;'-]{1,40})\s*(?:\|\s*(#[0-9a-fA-F]{3,6})\s*)?\s*>$/i;
-
-              const validFromAuthor = allIssues
-                .filter(i =>
-                  i.user?.login === login &&
-                  (i.title || '').trim().length <= MAX_LEN &&
-                  RE_CHECK.test((i.title || '').trim()) &&
-                  i.labels.some(l => l.name === 'Valid')
-                )
-                .sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
-
-              if (validFromAuthor.length > 2) {
-                const toStop = validFromAuthor.slice(2);
-
-                for (const old of toStop) {
-                  try {
-                    await github.rest.issues.removeLabel({
-                      owner: context.repo.owner,
-                      repo: context.repo.repo,
-                      issue_number: old.number,
-                      name: 'Valid'
-                    });
-                  } catch (_) {}
-
-                  await github.rest.issues.addLabels({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: old.number,
-                    labels: ['Stopped']
-                  });
-
-                  await github.rest.issues.createComment({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    issue_number: old.number,
-                    body: `⏹ This issue has been replaced by a newer entry (#${issue.number}) and is no longer displayed on the badge.`
-                  });
-                }
-              }
-
-            } else {
-              await github.rest.issues.addLabels({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: issue.number, labels: ['Invalid']
-              });
-              try {
-                await github.rest.issues.removeLabel({
-                  owner: context.repo.owner, repo: context.repo.repo,
-                  issue_number: issue.number, name: 'Valid'
-                });
-              } catch (_) {}
-
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: issue.number,
-                body: '❌ **Validation failed.** Please edit your issue to fix the following:\n\n' + errors.join('\n')
+            for (const label of LABELS) {
+              if (existingLabels.has(label.name)) continue;
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: label.name,
+                color: label.color,
+                description: label.description,
               });
             }
 
-            // Suspicious check: local banned-words/ (informational only, no label change)
-            if (heroName) {
-              const bannedDir = path.join(process.env.GITHUB_WORKSPACE, 'banned-words');
-              if (fs.existsSync(bannedDir) && fs.statSync(bannedDir).isDirectory()) {
-                const localFiles = fs.readdirSync(bannedDir).filter(f => f.endsWith('.txt'));
-                const localInput = heroName.toLowerCase();
+            // A reopened or edited issue must not keep the opposite label.
+            const applied = isValid ? 'Valid' : 'Invalid';
+            const removed = isValid ? 'Invalid' : 'Valid';
 
-                for (const file of localFiles) {
-                  const content = fs.readFileSync(path.join(bannedDir, file), 'utf8');
-                  const localPatterns = content
-                    .split('\n')
-                    .map(l => l.trim().toLowerCase())
-                    .filter(Boolean);
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: [applied],
+            });
 
-                  const suspiciousMatch = localPatterns.find(p => matchPattern(p, localInput));
-                  if (suspiciousMatch) {
-                  await github.rest.issues.addLabels({
-                      owner: context.repo.owner, repo: context.repo.repo,
-                      issue_number: issue.number, labels: ['Suspicious']
-                    });
-                    await github.rest.issues.createComment({
-                      owner: context.repo.owner, repo: context.repo.repo,
-                      issue_number: issue.number,
-                      body: `⚠️ **Suspicious:** Username matched a pattern in local dictionaries (file: \`banned-words/${file}\`, pattern: \`${suspiciousMatch}\`). This does not affect validation status — it is logged for manual review only.`
-                    });
-                    break;
-                  }
-                }
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: removed,
+              });
+            } catch (error) {
+              // 404 simply means the issue never carried the other label.
+              if (error.status !== 404) throw error;
+            }
+
+            if (!isValid) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: `❌ **Validation failed.** Edit the issue to fix the following:\n\n${problems.join('\n')}`,
+              });
+              return;
+            }
+
+            let body = '✅ **Validation passed!** This submission will appear on the badge.';
+            if (match && !match[2]) {
+              body +=
+                '\n\n💡 **Want a custom colour?** Edit the title to include one:\n' +
+                `\`\`\`\n<HeroeName|${name}|#FF0000>\n\`\`\`\n` +
+                'Any hex colour works (for example `#00FFAA`). Without it a colour is picked automatically.';
+            }
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body,
+            });
+
+            if (suspicious) {
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                labels: ['Suspicious'],
+              });
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body:
+                  '⚠️ **Suspicious:** the username matched a local dictionary entry.\n\n' +
+                  `File: \`${DICTIONARY_DIRECTORY}/${suspicious.file}\`\n` +
+                  `Rule: \`${suspicious.rule}\`\n\n` +
+                  'This does not affect the validation result; it is logged for manual review.',
+              });
+            }
+
+            // --- rotation -------------------------------------------------------
+            // Each account keeps its two newest accepted submissions; older ones
+            // are stopped so the badge stays a rotation rather than an archive.
+            const author = issue.user.login;
+            const submissions = (await github.paginate(github.rest.issues.listForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'all',
+              per_page: 100,
+            }))
+              .filter(
+                (candidate) =>
+                  candidate.user?.login === author &&
+                  !candidate.pull_request &&
+                  TITLE_RE.test((candidate.title || '').trim()) &&
+                  (candidate.labels || []).some((label) => label.name === 'Valid')
+              )
+              .sort((left, right) => new Date(right.created_at) - new Date(left.created_at));
+
+            for (const stale of submissions.slice(MAX_LABELLED_ISSUES)) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: stale.number,
+                  name: 'Valid',
+                });
+              } catch (error) {
+                if (error.status !== 404) throw error;
               }
+
+              await github.rest.issues.addLabels({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: stale.number,
+                labels: ['Stopped'],
+              });
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: stale.number,
+                body: `⏹ This submission has been replaced by a newer one (#${issue.number}) and is no longer shown on the badge.`,
+              });
             }

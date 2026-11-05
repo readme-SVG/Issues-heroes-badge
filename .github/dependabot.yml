@@ -1,12 +1,18 @@
 version: 2
+
 updates:
-  - package-ecosystem: "pip"
+  # The automation script installs its packages inline in the workflow, so the
+  # only ecosystem with a manifest in this repository is npm.
+  - package-ecosystem: "npm"
     directory: "/"
     schedule:
       interval: "monthly"
     labels:
       - "dependencies"
-      - "python"
+    groups:
+      npm:
+        patterns:
+          - "*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
@@ -14,4 +20,7 @@ updates:
       interval: "monthly"
     labels:
       - "dependencies"
-      - "actions"
+    groups:
+      actions:
+        patterns:
+          - "*"

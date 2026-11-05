@@ -1,10 +1,14 @@
 {
   "name": "github-issues-bounce-badge",
   "version": "1.0.0",
-  "description": "Dynamic GitHub badge for bouncing issue authors",
+  "description": "Serverless SVG badge that renders validated GitHub issue submissions",
+  "type": "module",
   "main": "api/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test \"test/**/*.test.js\""
   },
   "author": "OstinUA",
   "license": "MIT"

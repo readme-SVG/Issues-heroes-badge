@@ -1,125 +1,139 @@
 name: Audit Banned Word Violations
 
 on:
+  schedule:
+    - cron: '0 4 * * 1'
   workflow_dispatch:
+
+permissions: read-all
 
 jobs:
   audit:
+    name: Count violations and update the ledger
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     permissions:
-      issues: write
       contents: write
+      issues: write
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
+        with:
+          persist-credentials: false
 
-      - name: Audit and ban users
+      - name: Audit violations
         uses: actions/github-script@v9
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
-            const fs   = require('fs');
+            const fs = require('fs');
             const path = require('path');
 
             const BAN_THRESHOLD = 10;
-            const BANNED_FILE   = 'banned-user/banned-user.txt';
+            const LEDGER_PATH = 'banned-user/banned-user.txt';
+            const VIOLATION_MARKER = 'Username contains a banned word.';
+            const BLOCK_NOTICE_MARKER = 'has been blocked from the organization';
 
-            const allIssues = await github.paginate(github.rest.issues.listForRepo, {
-              owner:    context.repo.owner,
-              repo:     context.repo.repo,
-              state:    'all',
-              per_page: 100,
-            });
-
-            const counts = new Map();
-
-            for (const issue of allIssues) {
-              const hasInvalid = issue.labels.some(l => l.name === 'Invalid');
-              if (!hasInvalid) continue;
-
-              const comments = await github.paginate(github.rest.issues.listComments, {
-                owner:       context.repo.owner,
-                repo:        context.repo.repo,
-                issue_number: issue.number,
-                per_page:    100,
+            const { owner, repo } = context.repo;
+            const listIssues = (state) =>
+              github.paginate(github.rest.issues.listForRepo, {
+                owner,
+                repo,
+                state,
+                per_page: 100,
               });
 
-              const hasBannedWordViolation = comments.some(c =>
-                c.body && c.body.includes('Username contains a banned word.')
-              );
+            // Pull requests share the issue endpoints and are not submissions.
+            const issues = (await listIssues('all')).filter((issue) => !issue.pull_request);
 
-              if (!hasBannedWordViolation) continue;
+            const violations = new Map();
+            const violationIssues = new Map();
+
+            for (const issue of issues) {
+              const isInvalid = (issue.labels || []).some((label) => label.name === 'Invalid');
+              if (!isInvalid) continue;
 
               const login = issue.user?.login;
               if (!login) continue;
 
-              counts.set(login, (counts.get(login) || 0) + 1);
+              const comments = await github.paginate(github.rest.issues.listComments, {
+                owner,
+                repo,
+                issue_number: issue.number,
+                per_page: 100,
+              });
+
+              if (!comments.some((comment) => (comment.body || '').includes(VIOLATION_MARKER))) {
+                continue;
+              }
+
+              violations.set(login, (violations.get(login) || 0) + 1);
+              const tracked = violationIssues.get(login) || [];
+              tracked.push({ number: issue.number, comments });
+              violationIssues.set(login, tracked);
             }
 
-            const bannedDir = path.dirname(BANNED_FILE);
-            if (!fs.existsSync(bannedDir)) fs.mkdirSync(bannedDir, { recursive: true });
-
-            const existing = new Map();
-            if (fs.existsSync(BANNED_FILE)) {
-              const lines = fs.readFileSync(BANNED_FILE, 'utf8').split('\n').filter(Boolean);
-              for (const line of lines) {
-                const [name, num] = line.split('|').map(s => s.trim());
-                if (name) existing.set(name, parseInt(num) || 0);
+            // --- ledger ---------------------------------------------------------
+            // The file is the long-lived record: `login | count`, sorted by login
+            // so an unrelated run cannot produce a noisy diff.
+            const ledger = new Map();
+            if (fs.existsSync(LEDGER_PATH)) {
+              for (const line of fs.readFileSync(LEDGER_PATH, 'utf8').split('\n')) {
+                const [login, count] = line.split('|').map((part) => part.trim());
+                if (!login) continue;
+                ledger.set(login, Math.max(ledger.get(login) || 0, parseInt(count, 10) || 0));
               }
             }
 
-            for (const [login, count] of counts) {
-              const prev = existing.get(login) || 0;
-              existing.set(login, Math.max(prev, count));
+            for (const [login, count] of violations) {
+              ledger.set(login, Math.max(ledger.get(login) || 0, count));
             }
 
-            const lines = [];
-            for (const [login, count] of existing) {
-              lines.push(`${login} | ${count}`);
-            }
-            fs.writeFileSync(BANNED_FILE, lines.join('\n') + '\n', 'utf8');
+            const contents = [...ledger.entries()]
+              .sort(([left], [right]) => left.localeCompare(right))
+              .map(([login, count]) => `${login} | ${count}`)
+              .join('\n');
 
-            for (const [login, count] of existing) {
+            fs.mkdirSync(path.dirname(LEDGER_PATH), { recursive: true });
+            fs.writeFileSync(LEDGER_PATH, `${contents}\n`, 'utf8');
+
+            // --- enforcement ----------------------------------------------------
+            for (const [login, count] of ledger) {
               if (count < BAN_THRESHOLD) continue;
 
-              console.log(`Banning ${login} (${count} violations)`);
-
               try {
-                await github.rest.orgs.blockUser({
-                  org:      context.repo.owner,
-                  username: login,
-                });
-              } catch (e) {
-                console.error(`Failed to block ${login}: ${e.message}`);
+                await github.rest.orgs.blockUser({ org: owner, username: login });
+                console.log(`Blocked ${login} (${count} violations).`);
+              } catch (error) {
+                // Already blocked, no permission, or a personal-namespace repo:
+                // all of these are logged and retried on the next run.
+                console.log(`Could not block ${login}: ${error.message}`);
               }
 
-              for (const issue of allIssues) {
-                if (issue.user?.login !== login) continue;
-                const hasInvalid = issue.labels.some(l => l.name === 'Invalid');
-                if (!hasInvalid) continue;
+              for (const issue of violationIssues.get(login) || []) {
+                const alreadyNotified = issue.comments.some((comment) =>
+                  (comment.body || '').includes(BLOCK_NOTICE_MARKER),
+                );
+                if (alreadyNotified) continue;
 
-                try {
-                  await github.rest.issues.createComment({
-                    owner:        context.repo.owner,
-                    repo:         context.repo.repo,
-                    issue_number: issue.number,
-                    body:         `🚫 This user has been blocked from the organization due to repeated banned word violations (${count} total).`,
-                  });
-                } catch (e) {
-                  console.error(`Failed to comment on #${issue.number}: ${e.message}`);
-                }
+                await github.rest.issues.createComment({
+                  owner,
+                  repo,
+                  issue_number: issue.number,
+                  body: `🚫 This account has been blocked from the organization after repeated banned word violations (${count} in total).`,
+                });
               }
             }
 
-      - name: Commit banned-user.txt
+      - name: Commit ledger changes
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add banned-user/banned-user.txt
           if git diff --cached --quiet; then
-            echo "No changes"
-          else
-            git commit -m "chore: update banned-user.txt [$(date -u '+%Y-%m-%d')]"
-            git push
+            echo "Ledger is unchanged."
+            exit 0
           fi
+          git commit -m "chore: update banned-user ledger"
+          git push origin HEAD
