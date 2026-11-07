@@ -1,8 +1,9 @@
 /**
  * Standalone issue-title validator.
  *
- * The page is hosted on GitHub Pages, so it has no backend of its own and talks
- * to GitHub directly. Two constraints shape the code below:
+ * The page is served as a static file — by GitHub Pages and by the deployment
+ * root — so it has no backend of its own and talks to GitHub directly. Two
+ * constraints shape the code below:
  *
  *   - unauthenticated GitHub API calls are limited to 60 per hour per IP, so the
  *     dictionary tree is fetched once per session and cached, not per keystroke;

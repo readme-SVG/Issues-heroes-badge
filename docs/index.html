@@ -41,6 +41,33 @@
                 <li>Names are limited to 40 characters; titles to 60.</li>
             </ul>
         </details>
+
+        <section class="preview">
+            <h2>Live badge</h2>
+            <p class="lead">
+                Rendered on demand by the deployed endpoint from the validated issues of
+                <code>readme-SVG/Issues-heroes-badge</code>.
+            </p>
+            <img
+                id="live-badge"
+                src="https://issues-heroes-badge-zeta.vercel.app/api?user=readme-SVG&amp;repo=Issues-heroes-badge"
+                alt="Heroes board rendered from validated issues"
+                width="850"
+                height="200"
+                loading="lazy"
+                referrerpolicy="no-referrer"
+            >
+            <p id="preview-error" class="preview-error" hidden>
+                The badge did not load. Open
+                <a href="https://issues-heroes-badge-zeta.vercel.app/api/health">/api/health</a>
+                to see which dependency is failing.
+            </p>
+            <p class="endpoints">
+                Badge <a href="https://issues-heroes-badge-zeta.vercel.app/api">/api</a>
+                · alias <a href="https://issues-heroes-badge-zeta.vercel.app/badge">/badge</a>
+                · health <a href="https://issues-heroes-badge-zeta.vercel.app/api/health">/api/health</a>
+            </p>
+        </section>
     </main>
 
     <script type="module">
@@ -50,6 +77,12 @@
         const input = document.getElementById('issue-title');
         const button = document.getElementById('validate');
         const output = document.getElementById('result');
+
+        // The preview is the cheapest way to notice a broken deploy: an image that
+        // fails to load is reported in words instead of as an empty box.
+        document.getElementById('live-badge').addEventListener('error', () => {
+            document.getElementById('preview-error').hidden = false;
+        });
 
         let requestId = 0;
 

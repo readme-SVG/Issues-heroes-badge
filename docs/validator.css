@@ -143,8 +143,46 @@ button:disabled {
     padding-left: 20px;
 }
 
-.hint code {
-    color: var(--text);
+.hint code,
+.preview code {
+  color: var(--text);
+}
+
+.preview {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid #21262d;
+}
+
+.preview h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+}
+
+.preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background-color: var(--canvas);
+}
+
+.preview-error {
+  margin: 12px 0 0;
+  color: var(--invalid);
+  font-size: 13px;
+}
+
+.endpoints {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.preview-error a,
+.endpoints a {
+  color: #58a6ff;
 }
 
 .visually-hidden {

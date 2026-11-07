@@ -2,8 +2,24 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "rewrites": [
     {
+      "source": "/",
+      "destination": "/docs/index.html"
+    },
+    {
+      "source": "/validator.css",
+      "destination": "/docs/validator.css"
+    },
+    {
+      "source": "/validator.js",
+      "destination": "/docs/validator.js"
+    },
+    {
       "source": "/badge",
-      "destination": "/api/index.js"
+      "destination": "/api"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/health"
     }
   ]
 }

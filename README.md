@@ -20,7 +20,7 @@ A serverless logging-style visualization library that converts validated GitHub 
 
 ## Example in Markdown:
 
-[![Heroes Board](https://issues-heroes-badge.vercel.app/api?user=readme-SVG&repo=Issues-heroes-badge)](https://github.com/OstinUA)
+[![Heroes Board](https://issues-heroes-badge-zeta.vercel.app/api?user=readme-SVG&repo=Issues-heroes-badge)](https://github.com/OstinUA)
 
 </div>
 
@@ -31,6 +31,7 @@ A serverless logging-style visualization library that converts validated GitHub 
 - [Getting Started](#getting-started)
 - [Testing](#testing)
 - [Deployment](#deployment)
+- [Live Endpoints](#live-endpoints)
 - [Usage](#usage)
 - [Configuration](#configuration)
 - [License](#license)
@@ -52,8 +53,10 @@ A serverless logging-style visualization library that converts validated GitHub 
   - XML escaping for dynamic text.
   - Hex color validation and fallback palette strategy.
 - Operationally friendly defaults:
-  - Token auto-detection from `GH_TOKEN` / `GITHUB_TOKEN`.
+  - Token auto-detection from `GH_TOKEN` / `GITHUB_TOKEN`, tolerant of pasted whitespace and quotes.
+  - Anonymous retry when GitHub rejects the configured token, so one bad secret cannot blank every README.
   - No-token mode for public repositories (rate-limit tradeoff).
+- JSON health endpoint (`/api/health`) reporting token, quota, dictionary and entry state with a monitor-friendly status code.
 - Error-mode SVG output instead of plain JSON errors, preserving badge embedding behavior.
 
 > [!IMPORTANT]
@@ -74,19 +77,25 @@ A serverless logging-style visualization library that converts validated GitHub 
 ```text
 .
 ├── api/
-│   └── index.js                 # Serverless entry point: request handling and response headers
+│   ├── index.js                 # Serverless entry point: request handling and response headers
+│   └── health.js                # JSON diagnostics for the deployment (`/api/health`)
 ├── lib/
 │   ├── badge-svg.js             # SVG layout, animation timings and the error badge
 │   ├── dictionaries.js          # Remote dictionary loading, TTL cache, single-flight
 │   ├── entries.js               # Admission rules: labels, quotas, de-duplication, moderation
 │   ├── github.js                # GitHub REST client: timeouts, headers, typed errors
+│   ├── health.js                # Health report assembled from the same data as the badge
 │   ├── issue-title.js           # The `<HeroeName|Name|#RRGGBB>` contract
 │   ├── patterns.js              # Wildcard matcher (`*`, `+`, `&&`) without backtracking
+│   ├── query.js                 # `?user=&repo=` parsing shared by both endpoints
 │   └── xml.js                   # XML escaping for user-supplied text
-├── docs/                        # Static validator page served by GitHub Pages
+├── docs/                        # Static validator page (GitHub Pages and the deployment root)
+├── scripts/
+│   └── dev-server.mjs           # Dependency-free local runtime (`npm run dev`)
 ├── test/                        # Unit tests for the parsing, matching and rendering layers
 ├── banned-words/                # Local word lists (reference/data assets)
 ├── trigger action/              # Workflow automation for AI-assisted issue reports
+├── vercel.json                  # Routes: `/`, `/badge`, `/health` and the two functions
 ├── LICENSE
 ├── package.json
 └── README.md
@@ -94,7 +103,7 @@ A serverless logging-style visualization library that converts validated GitHub 
 
 ### Key Design Decisions
 
-- **Single-entry serverless handler** keeps deployment simple and platform-portable.
+- **Two small serverless handlers** — the badge and its health report — keep deployment simple and platform-portable.
 - **Validation-first ingestion pipeline** ensures only syntactically valid and moderated entries become visible.
 - **Fail-soft moderation data loading** uses caching and graceful degradation when external resources fail.
 - **Presentation stability by padding to 10 rows** keeps badge dimensions and layout deterministic.
@@ -150,14 +159,25 @@ npm test
 ```
 
 The suite exercises the issue-title grammar, the pattern engine (including
-adversarial input), admission rules and SVG escaping. CI runs the same command for
-every pull request.
+adversarial input), admission rules, SVG escaping, credential handling and the
+health report. CI runs the same command for every pull request.
 
-For a local end-to-end check, use the Vercel CLI:
+For a local end-to-end check, run the built-in dev server — it serves the same
+routes as the deployment and needs no Vercel account:
+
+```bash
+npm run dev
+curl "http://localhost:3000/api?user=readme-SVG&repo=Issues-heroes-badge"
+curl -s "http://localhost:3000/api/health"
+```
+
+If you prefer the real runtime, the Vercel CLI works too (it also reads `.env` /
+`.env.local`, so a local `GITHUB_TOKEN` exercises the authenticated path):
 
 ```bash
 npx vercel dev
 curl "http://localhost:3000/api?user=readme-SVG&repo=Issues-heroes-badge"
+curl -s "http://localhost:3000/api/health" | jq
 ```
 
 ## Deployment
@@ -168,25 +188,81 @@ curl "http://localhost:3000/api?user=readme-SVG&repo=Issues-heroes-badge"
 2. Import it into Vercel as a new project.
 3. Configure environment variables (`GITHUB_TOKEN` recommended).
 4. Deploy to Production.
+5. Verify the deployment before embedding the badge anywhere:
+
+```bash
+curl -s https://issues-heroes-badge-zeta.vercel.app/api/health | jq '{ok, degraded, errors}'
+```
+
+Routing lives in [`vercel.json`](vercel.json): the root path serves the validator
+page, `/badge` and `/health` are short aliases of the two functions, and no build
+step is required. The production deployment of this repository is
+**<https://issues-heroes-badge-zeta.vercel.app>**; if you fork it, Vercel assigns
+your own domain and only this file plus the README need to change.
 
 ### Suggested CI/CD Integration
 
 - Trigger deploys on `main` branch pushes.
 - Add a pre-deploy stage with:
   - `npm ci`
-  - static checks (after you add linter/test scripts)
-- Include synthetic health check hitting `/api` post-deployment.
+  - `npm test`
+- Include a synthetic health check hitting `/api/health` post-deployment: it returns
+  `503` when the badge cannot be rendered, so no JSON parsing is needed to alarm.
 
 ### Containerization Note
 
 This project is optimized for serverless delivery. If containerized, wrap the handler with a compatible Node HTTP adapter and ensure outbound access to GitHub APIs.
+
+## Live Endpoints
+
+Base URL: **<https://issues-heroes-badge-zeta.vercel.app>**
+
+| Route | Response | Purpose |
+| --- | --- | --- |
+| `/api` | `image/svg+xml` | The badge; accepts `?user=` and `?repo=`. |
+| `/badge` | `image/svg+xml` | Alias of `/api` for short embeds. |
+| `/api/health` | `application/json` | Deployment diagnostics, `200` when healthy and `503` when not. |
+| `/health` | `application/json` | Alias of `/api/health`. |
+| `/` | `text/html` | Issue-title validator, also served by GitHub Pages. |
+
+The health report answers the two questions a broken badge cannot: is the function
+reaching GitHub with the credential it was given, and did the moderation
+dictionaries load? It reports *whether* a token is configured and which variable
+supplied it — never the value:
+
+```bash
+curl -s https://issues-heroes-badge-zeta.vercel.app/api/health | jq
+```
+
+```json
+{
+  "ok": true,
+  "degraded": false,
+  "github": {
+    "ok": true,
+    "token": { "configured": true, "source": "GITHUB_TOKEN" },
+    "rateLimit": { "limit": 5000, "remaining": 4990, "authenticated": true }
+  },
+  "dictionaries": { "ok": true, "source": "readme-SVG/Banned-words@main", "patterns": 4210 },
+  "issues": { "ok": true, "fetched": 57, "accepted": 6, "slots": 10 }
+}
+```
+
+`degraded: true` means the badge still renders but moderation fell back to an empty
+pattern index, usually because `readme-SVG/Banned-words` was unreachable.
 
 ## Usage
 
 ### Markdown Badge Embed
 
 ```md
-![Heroes Board](https://<your-deployment-domain>/api?user=readme-SVG&repo=Issues-heroes-badge)
+![Heroes Board](https://issues-heroes-badge-zeta.vercel.app/api?user=readme-SVG&repo=Issues-heroes-badge)
+```
+
+For your own deployment, swap the domain and the target repository:
+
+```md
+![Heroes Board](https://<your-deployment-domain>/api?user=<owner>&repo=<repository>)
 ```
 
 ### Example Issue Contract
@@ -224,12 +300,20 @@ And ensure the issue contains the `Valid` label.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
+| `GH_TOKEN` | No* | unset | Preferred token variable when both are set. |
 | `GITHUB_TOKEN` | No* | unset | GitHub token used for authenticated API calls. |
-| `GH_TOKEN` | No* | unset | Alternative token variable; checked alongside `GITHUB_TOKEN`. |
 | `BANNED_WORDS_REPO` | No | `readme-SVG/Banned-words` | Source repository for banned-word dictionaries. |
 | `BANNED_WORDS_BRANCH` | No | `main` | Branch used when reading moderation dictionaries. |
 
 \* Required for production-grade quota and private repository access.
+
+> [!NOTE]
+> Token values are trimmed and unquoted before use, so a secret pasted with a
+> trailing newline or wrapped in quotes still works. If GitHub rejects the token
+> with `401`, the request is repeated anonymously — a lower quota, but the badge
+> keeps rendering — and the fallback is written to the function log.
+> `/api/health` shows which of the two happened: `github.rateLimit.authenticated`
+> is `true` only when the deployment is really running on a token.
 
 ### Runtime Query Parameters
 
@@ -238,12 +322,18 @@ And ensure the issue contains the `Valid` label.
 | `user` | No | `readme-SVG` | GitHub owner/user/organization name. |
 | `repo` | No | `Issues-heroes-badge` | Target repository to inspect issues from. |
 
+Both endpoints read these parameters through the same validator: anything that is
+not shaped like a GitHub identifier (including a repeated `?user=a&user=b`) falls
+back to the default instead of being interpolated into a request path.
+
 ### Configuration Strategy
 
 1. Start with defaults for public repositories.
-2. Add `GITHUB_TOKEN` in deployment secrets.
-3. Override moderation source via `BANNED_WORDS_REPO` if you maintain custom dictionaries.
-4. Keep issue template and labels standardized to protect pipeline quality.
+2. Add `GITHUB_TOKEN` in deployment secrets (a fine-grained token with **public
+   repositories read-only** access is enough; no scope is needed for public data).
+3. Confirm the token is picked up: `curl -s <deployment>/api/health | jq .github`.
+4. Override moderation source via `BANNED_WORDS_REPO` if you maintain custom dictionaries.
+5. Keep issue template and labels standardized to protect pipeline quality.
 
 ## License
 
