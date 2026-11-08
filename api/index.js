@@ -2,27 +2,10 @@ import { renderBadge, renderErrorBadge } from '../lib/badge-svg.js';
 import { loadPatternIndex } from '../lib/dictionaries.js';
 import { selectBadgeEntries } from '../lib/entries.js';
 import { fetchGitHubJson, GitHubRequestError } from '../lib/github.js';
+import { readTarget } from '../lib/query.js';
 
-const DEFAULT_OWNER = 'readme-SVG';
-const DEFAULT_REPO = 'Issues-heroes-badge';
 const ISSUES_PER_PAGE = 100;
 const CACHE_SECONDS = 60;
-
-/** Identifiers used by GitHub: alphanumerics, hyphen, underscore, dot. */
-const GITHUB_NAME_RE = /^[A-Za-z0-9_.-]{1,100}$/;
-
-/**
- * Reads a single-valued query parameter.
- *
- * Query strings are caller-controlled: `?user=a&user=b` yields an array, and
- * anything that is not shaped like a GitHub identifier is rejected before it can
- * be spliced into a request path. The default keeps the endpoint usable when a
- * parameter is missing or malformed.
- */
-function readIdentifier(value, fallback) {
-  const candidate = typeof value === 'string' ? value.trim() : '';
-  return GITHUB_NAME_RE.test(candidate) ? candidate : fallback;
-}
 
 function sendSvg(res, status, body, { cacheSeconds = null } = {}) {
   res.setHeader('Content-Type', 'image/svg+xml; charset=utf-8');
@@ -40,6 +23,14 @@ function sendSvg(res, status, body, { cacheSeconds = null } = {}) {
   res.status(status).send(body);
 }
 
+/**
+ * Renders the heroes board as an animated SVG badge.
+ *
+ * `GET /api?user=<owner>&repo=<name>`; both parameters are optional and fall
+ * back to the repository this project ships for. Every failure is rendered as an
+ * error badge, so an embedded image never turns into a broken icon, and
+ * `/api/health` reports the same state as JSON for whoever operates the deploy.
+ */
 export default async function handler(req, res) {
   if (req.method !== 'GET' && req.method !== 'HEAD') {
     res.setHeader('Allow', 'GET, HEAD');
@@ -48,8 +39,7 @@ export default async function handler(req, res) {
     return;
   }
 
-  const owner = readIdentifier(req.query?.user, DEFAULT_OWNER);
-  const repo = readIdentifier(req.query?.repo, DEFAULT_REPO);
+  const { owner, repo } = readTarget(req.query);
 
   try {
     const issues = await fetchGitHubJson(

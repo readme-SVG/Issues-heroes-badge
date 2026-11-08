@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
-import { describe, test } from 'node:test';
+import { afterEach, describe, test } from 'node:test';
 
 import { BADGE_SLOTS, pickFallbackColor, renderBadge, renderErrorBadge } from '../lib/badge-svg.js';
 import { selectBadgeEntries } from '../lib/entries.js';
+import { describeToken, fetchGitHubJson, fetchRawFile, resolveToken } from '../lib/github.js';
 import { MAX_NAME_LENGTH, normalizeHexColor, parseIssueTitle } from '../lib/issue-title.js';
 import { createPatternIndex, parseDictionary } from '../lib/patterns.js';
+import { DEFAULT_OWNER, DEFAULT_REPO, readIdentifier, readTarget } from '../lib/query.js';
 import { escapeXml } from '../lib/xml.js';
 
 describe('parseIssueTitle', () => {
@@ -179,5 +181,165 @@ describe('pickFallbackColor', () => {
   test('maps randomness onto the palette', () => {
     assert.equal(pickFallbackColor(() => 0), '#3f88e6');
     assert.equal(pickFallbackColor(() => 0.999), '#f1fa8c');
+  });
+});
+
+/** Token variables the credential tests own for their duration. */
+const TOKEN_ENV_VARS = ['GH_TOKEN', 'GITHUB_TOKEN'];
+const SAVED_TOKEN_ENV = Object.fromEntries(
+  TOKEN_ENV_VARS.map((name) => [name, process.env[name]]),
+);
+
+function restoreTokenEnv() {
+  for (const name of TOKEN_ENV_VARS) {
+    const saved = SAVED_TOKEN_ENV[name];
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
+  }
+}
+
+/** Minimal stand-in for the parts of `Response` the GitHub client reads. */
+function stubResponse({ status = 200, body = {}, headers = {}, text = null } = {}) {
+  return {
+    ok: status >= 200 && status < 300,
+    status,
+    headers: new Headers(headers),
+    json: async () => body,
+    text: async () => text ?? JSON.stringify(body),
+  };
+}
+
+describe('readTarget', () => {
+  test('falls back to the shipped repository', () => {
+    assert.deepEqual(readTarget(undefined), { owner: DEFAULT_OWNER, repo: DEFAULT_REPO });
+    assert.deepEqual(readTarget({}), { owner: DEFAULT_OWNER, repo: DEFAULT_REPO });
+  });
+
+  test('accepts identifiers and trims them', () => {
+    assert.deepEqual(readTarget({ user: ' octocat ', repo: 'Hello-World' }), {
+      owner: 'octocat',
+      repo: 'Hello-World',
+    });
+    assert.equal(readIdentifier('a.b_c-d', 'fallback'), 'a.b_c-d');
+  });
+
+  test('rejects repeated, empty and path-shaped values', () => {
+    // `?user=a&user=b` is parsed into an array by the platform.
+    assert.equal(readIdentifier(['a', 'b'], 'fallback'), 'fallback');
+    assert.equal(readIdentifier('   ', 'fallback'), 'fallback');
+    assert.equal(readIdentifier('../etc/passwd', 'fallback'), 'fallback');
+    assert.equal(readIdentifier('a/b', 'fallback'), 'fallback');
+    assert.equal(readIdentifier('x'.repeat(101), 'fallback'), 'fallback');
+    assert.equal(readIdentifier(42, 'fallback'), 'fallback');
+  });
+});
+
+describe('credential resolution', () => {
+  afterEach(restoreTokenEnv);
+
+  test('prefers GH_TOKEN and repairs pasted whitespace and quotes', () => {
+    delete process.env.GH_TOKEN;
+    process.env.GITHUB_TOKEN = '  ghp_pasted_from_a_terminal\n';
+    assert.equal(resolveToken(), 'ghp_pasted_from_a_terminal');
+    assert.deepEqual(describeToken(), { configured: true, source: 'GITHUB_TOKEN' });
+
+    process.env.GH_TOKEN = '"ghp_quoted_in_a_dotenv"';
+    assert.equal(resolveToken(), 'ghp_quoted_in_a_dotenv');
+    assert.deepEqual(describeToken(), { configured: true, source: 'GH_TOKEN' });
+  });
+
+  test('reports an absent credential instead of sending an empty one', () => {
+    delete process.env.GH_TOKEN;
+    process.env.GITHUB_TOKEN = "  ''  ";
+    assert.equal(resolveToken(), null);
+    assert.deepEqual(describeToken(), { configured: false, source: null });
+  });
+});
+
+describe('github client', () => {
+  const realFetch = globalThis.fetch;
+  const realWarn = console.warn;
+  let warnings;
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    console.warn = realWarn;
+    restoreTokenEnv();
+  });
+
+  function captureWarnings() {
+    warnings = [];
+    console.warn = (message) => warnings.push(String(message));
+  }
+
+  test('repeats the request anonymously once the token is rejected', async () => {
+    delete process.env.GH_TOKEN;
+    process.env.GITHUB_TOKEN = 'ghp_expired';
+    captureWarnings();
+
+    const authorizations = [];
+    globalThis.fetch = async (url, init) => {
+      authorizations.push(init.headers.Authorization ?? null);
+      return authorizations.length === 1
+        ? stubResponse({ status: 401 })
+        : stubResponse({ body: [{ number: 1 }] });
+    };
+
+    assert.deepEqual(await fetchGitHubJson('/repos/readme-SVG/Issues-heroes-badge/issues'), [
+      { number: 1 },
+    ]);
+    assert.deepEqual(authorizations, ['Bearer ghp_expired', null]);
+    assert.match(warnings.join('\n'), /retrying anonymously/);
+  });
+
+  test('propagates a missing repository without a second attempt', async () => {
+    delete process.env.GH_TOKEN;
+    process.env.GITHUB_TOKEN = 'ghp_valid';
+    captureWarnings();
+
+    let attempts = 0;
+    globalThis.fetch = async () => {
+      attempts += 1;
+      return stubResponse({ status: 404 });
+    };
+
+    await assert.rejects(
+      () => fetchGitHubJson('/repos/nobody/nothing/issues'),
+      (error) => {
+        assert.equal(error.name, 'GitHubRequestError');
+        assert.equal(error.status, 404);
+        return true;
+      },
+    );
+    assert.equal(attempts, 1);
+    assert.deepEqual(warnings, []);
+  });
+
+  test('names an exhausted quota in the logs', async () => {
+    delete process.env.GH_TOKEN;
+    delete process.env.GITHUB_TOKEN;
+    captureWarnings();
+
+    globalThis.fetch = async () =>
+      stubResponse({ status: 403, headers: { 'x-ratelimit-remaining': '0' } });
+
+    await assert.rejects(() => fetchGitHubJson('/rate_limit'));
+    assert.match(warnings.join('\n'), /anonymous rate limit exhausted/);
+  });
+
+  test('keeps the credential on the API host', async () => {
+    process.env.GITHUB_TOKEN = 'ghp_secret';
+
+    let seen = null;
+    globalThis.fetch = async (url, init) => {
+      seen = { url, headers: init.headers };
+      return stubResponse({ text: 'one rule per line\n' });
+    };
+
+    const contents = await fetchRawFile('readme-SVG', 'Banned-words', 'main', 'Banned-words-list/en.txt');
+
+    assert.equal(contents, 'one rule per line\n');
+    assert.equal(seen.url, 'https://raw.githubusercontent.com/readme-SVG/Banned-words/main/Banned-words-list/en.txt');
+    assert.equal(seen.headers.Authorization, undefined);
   });
 });

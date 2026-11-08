@@ -38,7 +38,7 @@ jobs:
 
       - name: Check JavaScript syntax
         run: |
-          find api lib docs -name '*.js' -print0 \
+          find api lib docs scripts test \( -name '*.js' -o -name '*.mjs' \) -print0 \
             | xargs -0 -r -n 1 node --check
 
   python:
